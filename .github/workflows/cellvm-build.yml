@@ -144,6 +144,7 @@ jobs:
             llvm-project/clang/test/CodeGen/ARM/wince-literal-pool.c \
             llvm-project/clang/test/CodeGen/ARM/wince-seh-ehabi-mixed.c \
             llvm-project/clang/test/CodeGen/ARM/wince-seh-scope-table.c \
+            llvm-project/clang/test/CodeGen/ARM/wince-codeview.c \
             llvm-project/clang/test/Parser/ms-pragmas-full.c \
             llvm-project/clang/test/Parser/ms-extern.c \
             llvm-project/clang/test/Sema/ms-extern.c \
@@ -232,6 +233,18 @@ jobs:
             --sysroot "$PWD/install/wince-llvm/wince-sysroot" \
             --target "$TARGET" \
             --build-dir "$PWD/build-wince-runtimes"
+
+      - name: "Stage 3: CodeView debug smoke-check"
+        run: |
+          CLANG="$PWD/install/wince-llvm/bin/clang"
+          BIN="$PWD/install/wince-llvm/bin"
+
+          printf 'int add(int a, int b){return a+b;}\nint main(void){return add(1,2)-3;}\n' > smoke-cv.c
+          "$CLANG" --target="$TARGET" -g -o smoke-cv.exe smoke-cv.c
+          "$BIN/llvm-objdump" -h smoke-cv.exe | tee smoke-cv.sections
+          grep -q "\.debug\\$S" smoke-cv.sections
+          grep -q "\.debug\\$T" smoke-cv.sections
+          echo "CodeView sections embedded in the linked image (-g -> lld-link -debug)"
 
       # -----------------------------------------------------------------
       # Package
