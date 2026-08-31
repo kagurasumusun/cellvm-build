@@ -1,0 +1,16 @@
+[submodule "llvm-project"]
+	path = llvm-project
+	url = https://github.com/kagurasumusun/llvm-project.git
+	branch = llvm-wince
+[submodule "mingwrt"]
+	path = mingwrt
+	url = https://github.com/kagurasumusun/mingwrt.git
+	branch = master
+[submodule "w32api"]
+	path = w32api
+	url = https://github.com/kagurasumusun/w32api.git
+	branch = wip
+[submodule "pthread-win32"]
+	path = pthread-win32
+	url = https://github.com/kagurasumusun/pthread-win32.git
+	branch = master

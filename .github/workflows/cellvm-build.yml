@@ -1,0 +1,422 @@
+# Windows CE full toolchain build (cellvm-build)
+#
+# Consumes four submodules:
+#   llvm-project   (kagurasumusun/llvm-project @ llvm-wince)  compiler side
+#   mingwrt        (kagurasumusun/mingwrt @ master)           CeGCC-lineage CRT
+#   w32api         (kagurasumusun/w32api @ wip)               WinCE API headers/defs
+#   pthread-win32  (kagurasumusun/pthread-win32 @ master)     static thread lib
+#
+# Pipeline (every push, plus workflow_dispatch):
+#   Stage 1: host LLVM/Clang/LLD + WinCE lit tests (from llvm-project)
+#   Stage 2: sysroot (build-wince-sysroot.sh)
+#   Stage 3: compiler-rt builtins + libunwind/libc++abi/libc++ (build-wince-runtimes.sh)
+#   Packaging + install/compile sanity check
+#   Stage 4: unmodified TECLIB/glpi-wince-agent (their Makefile)
+#   Stage 5: MaxSignal/Player 0.6.2.3-wince (official zip, Makefile overlay, no audio)
+#
+# Caching keeps the hot loop fast: ccache and the Ninja build directory are
+# restored by key and resumed incrementally, so a small fix after a prior run
+# only recompiles what changed.
+
+name: cellvm-build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cellvm-${{ github.ref }}
+
+env:
+  TARGET: arm-pc-wince
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_MAXSIZE: 2G
+  CCACHE_COMPRESS: "1"
+  CCACHE_COMPRESSLEVEL: "6"
+  CCACHE_NOHASHDIR: "true"
+
+jobs:
+  build:
+    name: WinCE full toolchain
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build cmake python3 python3-psutil zlib1g-dev gcc g++ make \
+            lld ccache zstd mold unzip pkg-config autoconf automake libtool
+
+          if ! command -v ld.mold >/dev/null 2>&1; then
+            sudo ln -sf "$(command -v mold)" /usr/local/bin/ld.mold
+          fi
+
+          echo "ccache: $(ccache --version | head -1)"
+          echo "ninja: $(ninja --version)"
+          echo "nproc=$(nproc)  mem=$(free -h | awk '/Mem/{print $2}')"
+          echo "submodule pins:"
+          git submodule status
+
+      # -----------------------------------------------------------------
+      # Caching
+      # -----------------------------------------------------------------
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('llvm-project/clang/cmake/caches/WinCE.cmake') }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: Restore Ninja build dir
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/build
+          key: ninja-${{ runner.os }}-${{ hashFiles('llvm-project/clang/cmake/caches/WinCE.cmake') }}-${{ github.sha }}
+          restore-keys: ninja-${{ runner.os }}-
+
+      # -----------------------------------------------------------------
+      # Stage 1: host LLVM/Clang/LLD + tools + WinCE lit tests
+      # -----------------------------------------------------------------
+
+      - name: "Stage 1: configure (WinCE cache)"
+        run: |
+          ccache -z
+
+          cmake -G Ninja -S llvm-project/llvm -B build \
+            -C llvm-project/clang/cmake/caches/WinCE.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/install/wince-llvm" \
+            -DLLVM_INSTALL_TOOLCHAIN_ONLY=ON
+
+          echo "ccache stats before build:"
+          ccache -s
+
+      - name: "Stage 1: build clang + lld + tools"
+        run: |
+          cmake --build build --target clang lld llc \
+            llvm-ar llvm-ranlib llvm-dlltool llvm-nm llvm-mc llvm-readobj \
+            llvm-objdump llvm-objcopy llvm-rc llvm-config \
+            FileCheck split-file not count
+
+          BIN=build/bin
+          [ -e "$BIN/clang-cl" ] || ln -sf clang "$BIN/clang-cl"
+          [ -e "$BIN/lld-link" ] || ln -sf lld "$BIN/lld-link"
+          test -x "$BIN/llvm-lit"
+
+          echo "ccache stats after build:"
+          ccache -s
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('llvm-project/clang/cmake/caches/WinCE.cmake') }}-${{ github.sha }}
+
+      - name: Save Ninja build dir
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/build
+          key: ninja-${{ runner.os }}-${{ hashFiles('llvm-project/clang/cmake/caches/WinCE.cmake') }}-${{ github.sha }}
+
+      - name: "Stage 1: WinCE lit tests"
+        run: |
+          set +e
+
+          ./build/bin/llvm-lit -sv --timeout 900 \
+            llvm-project/clang/test/Driver/wince.c \
+            llvm-project/clang/test/CodeGen/wince-seh.c \
+            llvm-project/clang/test/CodeGen/ARM/wince-ehabi-tables.c \
+            llvm-project/clang/test/CodeGen/ARM/wince-global-ctors.c \
+            llvm-project/clang/test/CodeGen/ARM/wince-literal-pool.c \
+            llvm-project/clang/test/CodeGen/ARM/wince-seh-ehabi-mixed.c \
+            llvm-project/clang/test/CodeGen/ARM/wince-seh-scope-table.c \
+            llvm-project/clang/test/Parser/ms-pragmas-full.c \
+            llvm-project/clang/test/Parser/ms-extern.c \
+            llvm-project/clang/test/Sema/ms-extern.c \
+            llvm-project/lld/test/COFF/wince-arm-relocs.s \
+            llvm-project/lld/test/COFF/wince-ctors.s \
+            llvm-project/lld/test/COFF/wince-exidx-bounds.s \
+            llvm-project/lld/test/COFF/wince-image.s \
+            llvm-project/lld/test/COFF/wince-pdata.test \
+            llvm-project/lld/test/COFF/wince-range-thunk.s \
+            llvm-project/lld/test/COFF/wince-range-thunk-thumb.s \
+            llvm-project/lld/test/COFF/wince-thumb-bit.s \
+            llvm-project/lld/test/COFF/wince-thunk.s \
+            llvm-project/llvm/test/MC/ARM/wince-coff-relocs.s \
+            llvm-project/llvm/test/MC/ARM/wince-exidx.s \
+            llvm-project/llvm/test/MC/ARM/wince-seh-pdata.s \
+            llvm-project/llvm/test/MC/ARM/wince-armasm.s \
+            llvm-project/llvm/test/MC/ARM/wince-armasm-labels.s \
+            llvm-project/llvm/test/CodeGen/ARM/wince-seh-parent-frame.ll \
+            llvm-project/llvm/test/CodeGen/ARM/wince-soft-float.ll
+
+          RC=$?
+          set -e
+
+          if [ $RC -ne 0 ]; then
+            echo "===== WinCE lit gate FAILED (rc=$RC) ====="
+            exit $RC
+          fi
+
+      # -----------------------------------------------------------------
+      # Install
+      # -----------------------------------------------------------------
+
+      - name: "Install (isolated prefix)"
+        run: |
+          cmake --build build --target \
+            install-clang install-clang-resource-headers install-lld
+
+          BIN="$PWD/install/wince-llvm/bin"
+          mkdir -p "$BIN"
+
+          for t in clang clang++ clang-cl lld ld.lld lld-link \
+                   llvm-ar llvm-ranlib llvm-dlltool llvm-lib llvm-nm llvm-mc \
+                   llvm-readobj llvm-objdump llvm-objcopy llvm-strip llvm-rc \
+                   llvm-windres llvm-config; do
+            if [ -e "build/bin/$t" ] || [ -L "build/bin/$t" ]; then
+              cp -a "build/bin/$t" "$BIN/"
+            fi
+          done
+
+          [ -e "$BIN/clang++" ] || ln -sf clang "$BIN/clang++"
+          [ -e "$BIN/clang-cl" ] || ln -sf clang "$BIN/clang-cl"
+          [ -e "$BIN/lld-link" ] || ln -sf lld "$BIN/lld-link"
+
+          ls -l "$BIN"
+
+      # -----------------------------------------------------------------
+      # Stage 2: sysroot
+      # -----------------------------------------------------------------
+
+      - name: "Stage 2: assemble sysroot"
+        run: |
+          sh build-wince-sysroot.sh \
+            --toolchain "$PWD/install/wince-llvm/bin" \
+            --target "$TARGET" \
+            --prefix "$PWD/install/wince-llvm/wince-sysroot" \
+            --jobs "$(nproc)"
+
+      - name: "Stage 2: smoke-check"
+        run: |
+          CLANG="$PWD/install/wince-llvm/bin/clang"
+
+          printf 'int __attribute__((constructor)) c(void){return 0;}\nint main(void){return 0;}\n' \
+            > smoke.c
+
+          "$CLANG" --target="$TARGET" -c smoke.c -o smoke.o
+          "$CLANG" --target="$TARGET" -### smoke.c -o smoke.exe 2>&1 | head -20
+
+      # -----------------------------------------------------------------
+      # Stage 3: runtimes
+      # -----------------------------------------------------------------
+
+      - name: "Stage 3: runtimes"
+        run: |
+          bash build-wince-runtimes.sh \
+            --toolchain "$PWD/install/wince-llvm/bin" \
+            --sysroot "$PWD/install/wince-llvm/wince-sysroot" \
+            --target "$TARGET" \
+            --build-dir "$PWD/build-wince-runtimes"
+
+      # -----------------------------------------------------------------
+      # Package
+      # -----------------------------------------------------------------
+
+      - name: "Package (isolated install + target-prefixed wrappers)"
+        run: |
+          PREFIX="$PWD/install/wince-llvm"
+          BIN="$PREFIX/bin"
+
+          for t in clang clang++ gcc g++ cc c++ ld.lld; do
+            if [ -e "$BIN/$t" ] || [ -L "$BIN/$t" ]; then
+              ln -sf "$t" "$BIN/arm-pc-wince-$t"
+            fi
+          done
+
+          for t in lld-link llvm-ar llvm-ranlib llvm-dlltool llvm-nm \
+                   llvm-mc llvm-readobj llvm-objdump; do
+            [ -e "$BIN/$t" ] && ln -sf "$t" "$BIN/arm-pc-wince-$t"
+          done
+
+          TAR="wince-llvm-$TARGET-${{ runner.os }}-${{ github.sha }}.tar.zst"
+
+          tar --zstd -cf "$TAR" -C install wince-llvm
+          sha256sum "$TAR" > "$TAR.sha256"
+
+      - name: "Package sanity: install to /opt and compile"
+        run: |
+          TAR=$(ls wince-llvm-*.tar.zst | head -1)
+
+          sudo tar --zstd -xf "$TAR" -C /opt
+
+          "$PWD/install/wince-llvm/bin/clang" --target="$TARGET" \
+            -### -o /tmp/hi.exe /dev/null 2>&1 | head -5
+
+      # -----------------------------------------------------------------
+      # Stage 4: unmodified third-party WinCE application
+      # TECLIB/glpi-wince-agent (GPLv2). Their Makefile, their sources.
+      # -----------------------------------------------------------------
+
+      - name: "Stage 4: TECLIB/glpi-wince-agent (unmodified)"
+        run: |
+          PREFIX="$PWD/install/wince-llvm"
+          BIN="$PREFIX/bin"
+          [ -e "$BIN/clang++" ] || ln -sf clang "$BIN/clang++"
+          [ -e "$BIN/llvm-windres" ] || ln -sf llvm-rc "$BIN/llvm-windres"
+          sh bind-cegcc-names.sh "$BIN"
+          export PATH="$BIN:$PATH"
+
+          echo "CeGCC-named tools:"
+          ls -l "$BIN"/arm-mingw32ce-*
+          arm-mingw32ce-gcc --version | head -1
+
+          SRC="$RUNNER_TEMP/glpi-wince-agent"
+          # Pin the upstream commit. Fetch that SHA only; do not patch.
+          mkdir -p "$SRC"
+          git -C "$SRC" init
+          git -C "$SRC" remote add origin \
+            https://github.com/TECLIB/glpi-wince-agent.git
+          git -C "$SRC" fetch --depth 1 origin \
+            eb88be1a8224d731f255a9c4aae56c9812f6cc20
+          git -C "$SRC" checkout --detach FETCH_HEAD
+          test "$(git -C "$SRC" rev-parse HEAD)" = \
+            eb88be1a8224d731f255a9c4aae56c9812f6cc20
+          git -C "$SRC" status --porcelain
+
+          # Their Makefile. Do not patch the tree.
+          make -C "$SRC" -j"$(nproc)"
+
+          EXE="$SRC/src/glpi-wince-agent.exe"
+          test -s "$EXE"
+          llvm-readobj --file-headers "$EXE"
+          llvm-objdump -h "$EXE" | head -40
+
+          # Stage products for upload (RUNNER_TEMP is not an artifact).
+          DEST="$PWD/products/glpi-wince-agent"
+          mkdir -p "$DEST"
+          cp -a "$EXE" "$DEST/"
+          for f in glpi-wince-agent-setup.dll glpi-wince-agent-service.dll; do
+            [ -f "$SRC/src/$f" ] && cp -a "$SRC/src/$f" "$DEST/"
+          done
+          llvm-readobj --file-headers "$EXE" \
+            > "$DEST/glpi-wince-agent.exe.headers.txt"
+          {
+            echo "upstream: TECLIB/glpi-wince-agent"
+            echo "commit: eb88be1a8224d731f255a9c4aae56c9812f6cc20"
+            echo "unmodified: yes (their Makefile, no patches)"
+            echo "toolchain: ${{ github.sha }}"
+            echo "target: $TARGET"
+            echo
+            sha256sum "$DEST"/* || true
+          } > "$DEST/SHA256SUMS"
+
+      # -----------------------------------------------------------------
+      # Stage 5: MaxSignal/Player 0.6.2.3-wince (official zip).
+      # Overlay LLVM/Clang Makefile only. No Player C++ patches. No audio.
+      # -----------------------------------------------------------------
+
+      - name: "Stage 5: MaxSignal/Player 0.6.2.3-wince (no audio)"
+        run: |
+          PREFIX="$PWD/install/wince-llvm"
+          BIN="$PREFIX/bin"
+          [ -e "$BIN/clang++" ] || ln -sf clang "$BIN/clang++"
+          [ -e "$BIN/llvm-windres" ] || ln -sf llvm-rc "$BIN/llvm-windres"
+          sh bind-cegcc-names.sh "$BIN"
+          export PATH="$BIN:$PATH"
+          export PREFIX="$PWD/install/wince-easyrpg-deps"
+          export DEST="$PWD/products/easyrpg-player"
+          export WORK="$RUNNER_TEMP/easyrpg-wince"
+          export JOBS="$(nproc)"
+          sh build-easyrpg-player.sh
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## WinCE toolchain products"
+            echo
+            echo "- commit: \`${{ github.sha }}\`"
+            echo "- target: \`$TARGET\`"
+            echo
+            if ls wince-llvm-*.tar.zst >/dev/null 2>&1; then
+              echo "### Toolchain"
+              echo
+              echo '```'
+              ls -l wince-llvm-*.tar.zst*
+              sha256sum wince-llvm-*.tar.zst
+              echo '```'
+            fi
+            if [ -d products/glpi-wince-agent ]; then
+              echo
+              echo "### TECLIB/glpi-wince-agent (unmodified)"
+              echo
+              echo '```'
+              ls -l products/glpi-wince-agent
+              cat products/glpi-wince-agent/SHA256SUMS
+              echo '```'
+            fi
+            if [ -d products/easyrpg-player ]; then
+              echo
+              echo "### MaxSignal/Player 0.6.2.3-wince (no audio, Makefile overlay)"
+              echo
+              echo '```'
+              ls -l products/easyrpg-player
+              cat products/easyrpg-player/SHA256SUMS
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload toolchain
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wince-llvm-${{ env.TARGET }}-${{ runner.os }}
+          path: |
+            wince-llvm-*.tar.zst
+            wince-llvm-*.tar.zst.sha256
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload glpi-wince-agent
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: glpi-wince-agent-${{ env.TARGET }}
+          path: products/glpi-wince-agent/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload easyrpg-player
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: easyrpg-player-${{ env.TARGET }}
+          path: products/easyrpg-player/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload build logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cellvm-build-logs-${{ runner.os }}
+          path: |
+            build-wince-sysroot/**/*.log
+            build-wince-runtimes/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14

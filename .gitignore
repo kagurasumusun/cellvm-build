@@ -1,0 +1,9 @@
+# build output
+build-wince-sysroot/
+build-wince-runtimes/
+products/
+*.log
+# editor
+.vscode/
+.idea/
+*~
