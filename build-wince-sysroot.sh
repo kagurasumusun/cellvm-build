@@ -27,7 +27,8 @@
 #     libmingw32.a libm.a      mingwrt glue libraries (MINGW_OBJS(ce))
 #     libmingwex.a             mingwrt C library supplement (CE object set)
 #     libceoldname.a           old-name aliases via COREDLL (mingwrt)
-#     libcoredll.a libcoredll6.a  COREDLL import libraries (mingwrt)
+#     libcoredll.a libcoredll3.a libcoredll4.a libcoredll6.a
+                                  COREDLL import libraries by CE version (mingwrt)
 #     lib*.a                   w32api libce import libraries
 #     libpthread.a             optional; link with -mthreads / -pthread
 #     libposix.a               optional POSIX shim; not on the default link line
@@ -219,7 +220,7 @@ if [ ! -f Makefile ]; then
 fi
 # CRT0S(ce) + MINGW_OBJS(ce) archives + COREDLL import libraries (their rules).
 make -j "$JOBS" crt3.o dllcrt3.o CRT_noglob.o crtmt.o crtst.o \
-     libmingw32.a libm.a libcoredll.a libcoredll6.a libceoldname.a \
+     libmingw32.a libm.a libcoredll.a libcoredll3.a libcoredll4.a libcoredll6.a libceoldname.a \
      >> build.log 2>&1 || { tail -80 build.log; exit 1; }
 # mingwex CE object set (the Makefile selects MATHCE/STDIO_CE/etc. by host).
 make -j "$JOBS" -C mingwex libmingwex.a >> mingwex.log 2>&1 || \
@@ -227,7 +228,7 @@ make -j "$JOBS" -C mingwex libmingwex.a >> mingwex.log 2>&1 || \
 
 install -m 644 crt3.o dllcrt3.o CRT_noglob.o crtmt.o crtst.o \
   libmingw32.a libm.a libceoldname.a \
-  libcoredll.a libcoredll6.a "$SYSROOT/lib/"
+  libcoredll.a libcoredll3.a libcoredll4.a libcoredll6.a "$SYSROOT/lib/"
 install -m 644 mingwex/libmingwex.a "$SYSROOT/lib/"
 # libmingwthrd.a: mingwrt's own rule pairs crtmt.o with an import library
 # for its thread DLL (mingwm10.dll), and the shared make rule would drag in
