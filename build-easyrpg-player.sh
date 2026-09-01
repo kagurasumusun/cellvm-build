@@ -137,7 +137,17 @@ if [ ! -f "$PREFIX/lib/libiconv.a" ]; then
     # - raise.c falls back to kill(getpid(), sig); COREDLL has neither.
     # POSIX-compliant free and a working raise() are the honest answers
     # for this CRT, so preset the probes.
+    # - malloc/realloc/free follow the same probe chain; a "no" answer
+    #   pulls rpl bodies that #undef the name and then call it undeclared
+    #   (gnulib's replacement stdlib.h never includes the system header).
+    # - stat-w32 decides Vista-vs-dynamic-load with
+    #   _WIN32_WINNT >= _WIN32_WINNT_VISTA; w32api leaves both at their
+    #   fallbacks, and the undefined _WIN32_WINNT_VISTA evaluates to 0,
+    #   silently claiming Vista and calling GetFinalPathNameByHandleA
+    #   directly.  Defining the constant restores the guarded path.
     gl_cv_func_free_preserves_errno=yes ac_cv_func_raise=yes \
+    gl_cv_func_malloc_posix=yes \
+    CFLAGS="-g -O2 -D_WIN32_WINNT_VISTA=0x0600" \
     ./configure --host="$CROSS" --prefix="$PREFIX" \
       --disable-shared --enable-static --disable-nls
     make -j"$JOBS"
