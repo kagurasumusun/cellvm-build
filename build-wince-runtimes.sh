@@ -123,7 +123,11 @@ cmake -S "$REPO_ROOT/runtimes" -B "$BLD/runtimes" \
   -DLIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY=ON \
   -DLIBCXX_ENABLE_MONOTONIC_CLOCK=ON \
   -DLIBCXX_ENABLE_THREADS=OFF \
-  -DLIBCXX_ENABLE_FILESYSTEM=OFF \
+  # fstream needs the filesystem configuration gate (_LIBCPP_HAS_FILESYSTEM);
+# without it <fstream> is an empty shell and nothing using ifstream builds.
+# The fs sources stay unreferenced at application link time (Player/liblcf
+# use no std::filesystem), so they cost nothing there.
+-DLIBCXX_ENABLE_FILESYSTEM=ON \
   -DLIBCXX_ENABLE_WIDE_CHARACTERS=ON \
   -DLIBCXX_HERMETIC_STATIC_LIBRARY=ON
 
