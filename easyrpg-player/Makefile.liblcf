@@ -10,6 +10,9 @@ PREFIX  ?= /usr/local
 
 CPPFLAGS += -DHAVE_CONFIG_H -I. -Isrc -Isrc/generated
 CXXFLAGS += -std=c++14 -O2 -fno-math-errno
+# encoder.cpp takes its iconv branch whenever ICU is absent, but includes
+# <iconv.h> only on non-WIN32 targets; force-include our libiconv header.
+CXXFLAGS += -include iconv.h
 
 SRCS = \
 	src/data.cpp \
