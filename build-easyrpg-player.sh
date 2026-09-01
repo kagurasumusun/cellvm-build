@@ -137,7 +137,7 @@ if [ ! -f "$PREFIX/lib/libiconv.a" ]; then
     # - raise.c falls back to kill(getpid(), sig); COREDLL has neither.
     # POSIX-compliant free and a working raise() are the honest answers
     # for this CRT, so preset the probes.
-    gl_cv_func_free_posix=yes ac_cv_func_raise=yes \
+    gl_cv_func_free_preserves_errno=yes ac_cv_func_raise=yes \
     ./configure --host="$CROSS" --prefix="$PREFIX" \
       --disable-shared --enable-static --disable-nls
     make -j"$JOBS"
