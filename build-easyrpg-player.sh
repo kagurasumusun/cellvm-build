@@ -162,6 +162,11 @@ if [ ! -f "$PREFIX/lib/libSDL.a" ]; then
   fetch https://github.com/libsdl-org/SDL-1.2/archive/refs/tags/release-1.2.15.tar.gz SDL-1.2.15.tar.gz
   rm -rf SDL-1.2-release-1.2.15
   tar -xzf SDL-1.2.15.tar.gz
+  # Vanilla 1.2.15 assumes the GAPI driver whenever _WIN32_WCE is defined;
+  # this build is WINDIB-only, so gate its hooks on the driver macro, drop
+  # the desktop GetMenu()/USER32 TrackMouseEvent lookups (COREDLL has
+  # neither) - see sdl-1.2.15-wce.patch.
+  patch -p1 < "$OVERLAY/sdl-1.2.15-wce.patch"
   cp -a "$OVERLAY/SDL_config.h" SDL-1.2-release-1.2.15/include/SDL_config.h
   cp -a "$OVERLAY/Makefile.sdl" SDL-1.2-release-1.2.15/Makefile
   make -C SDL-1.2-release-1.2.15 -j"$JOBS" CROSS="$CROSS" PREFIX="$PREFIX"

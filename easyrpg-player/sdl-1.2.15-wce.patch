@@ -1,0 +1,88 @@
+--- a/src/video/wincommon/SDL_sysevents.c
++++ b/src/video/wincommon/SDL_sysevents.c
+@@ -203,7 +203,7 @@
+ #endif /* NO_CHANGEDISPLAYSETTINGS */
+ }
+ 
+-#ifdef WM_MOUSELEAVE
++#if defined(WM_MOUSELEAVE) && !defined(_WIN32_WCE)
+ /* 
+    Special code to handle mouse leave events - this sucks...
+    http://support.microsoft.com/support/kb/articles/q183/1/07.asp
+@@ -330,7 +330,7 @@
+ 
+ 		case WM_MOUSEMOVE: {
+ 
+-#ifdef WM_MOUSELEAVE
++#if defined(WM_MOUSELEAVE) && !defined(_WIN32_WCE)
+ 			if ( SDL_VideoSurface ) {
+ 				/* mouse has entered the window */
+ 
+@@ -353,7 +353,7 @@
+ 		}
+ 		return(0);
+ 
+-#ifdef WM_MOUSELEAVE
++#if defined(WM_MOUSELEAVE) && !defined(_WIN32_WCE)
+ 		case WM_MOUSELEAVE: {
+ 
+ 			if ( SDL_VideoSurface ) {
+@@ -444,7 +444,7 @@
+ 				} else {
+ 					x = (Sint16)LOWORD(lParam);
+ 					y = (Sint16)HIWORD(lParam);
+-#ifdef _WIN32_WCE
++#if defined(_WIN32_WCE) && defined(SDL_VIDEO_DRIVER_GAPI)
+ 					if (SDL_VideoSurface)
+ 						GapiTransform(this->hidden->userOrientation,
+ this->hidden->hiresFix, &x, &y);
+@@ -538,7 +538,11 @@
+ 				&size,
+ 				style,
+             			style & WS_CHILDWINDOW ? FALSE
++#ifdef _WIN32_WCE	/* CE has no window menus; GetMenu does not exist */
++						       : FALSE);
++#else
+ 						       : GetMenu(hwnd) != NULL);
++#endif
+ 
+ 			width = size.right - size.left;
+ 			height = size.bottom - size.top;
+@@ -715,7 +719,7 @@
+ int SDL_RegisterApp(char *name, Uint32 style, void *hInst)
+ {
+ 	WNDCLASS class;
+-#ifdef WM_MOUSELEAVE
++#if defined(WM_MOUSELEAVE) && !defined(_WIN32_WCE)
+ 	HMODULE handle;
+ #endif
+ 
+@@ -766,7 +770,7 @@
+ 		return(-1);
+ 	}
+ 
+-#ifdef WM_MOUSELEAVE
++#if defined(WM_MOUSELEAVE) && !defined(_WIN32_WCE)
+ 	/* Get the version of TrackMouseEvent() we use */
+ 	_TrackMouseEvent = NULL;
+ 	handle = GetModuleHandle("USER32.DLL");
+--- a/src/video/wincommon/SDL_syswm.c
++++ b/src/video/wincommon/SDL_syswm.c
+@@ -249,7 +249,7 @@
+ 			ClientToScreen(SDL_Window, &pt);
+ 			SetCursorPos(pt.x,pt.y);
+ 		}
+-#ifdef _WIN32_WCE
++#if defined(_WIN32_WCE) && defined(SDL_VIDEO_DRIVER_GAPI)
+ 		AllKeys(0);
+ #endif
+ 	} else {
+@@ -264,7 +264,7 @@
+ 			ClientToScreen(SDL_Window, &pt);
+ 			SetCursorPos(pt.x, pt.y);
+ 		}
+-#ifdef _WIN32_WCE
++#if defined(_WIN32_WCE) && defined(SDL_VIDEO_DRIVER_GAPI)
+ 		AllKeys(1);
+ #endif
+ 	}
