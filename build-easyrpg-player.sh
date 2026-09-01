@@ -166,7 +166,7 @@ if [ ! -f "$PREFIX/lib/libSDL.a" ]; then
   # this build is WINDIB-only, so gate its hooks on the driver macro, drop
   # the desktop GetMenu()/USER32 TrackMouseEvent lookups (COREDLL has
   # neither) - see sdl-1.2.15-wce.patch.
-  patch -p1 < "$OVERLAY/sdl-1.2.15-wce.patch"
+  patch -d SDL-1.2-release-1.2.15 -p1 < "$OVERLAY/sdl-1.2.15-wce.patch"
   cp -a "$OVERLAY/SDL_config.h" SDL-1.2-release-1.2.15/include/SDL_config.h
   cp -a "$OVERLAY/Makefile.sdl" SDL-1.2-release-1.2.15/Makefile
   make -C SDL-1.2-release-1.2.15 -j"$JOBS" CROSS="$CROSS" PREFIX="$PREFIX"
