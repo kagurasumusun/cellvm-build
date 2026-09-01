@@ -241,11 +241,17 @@ jobs:
           BIN="$PWD/install/wince-llvm/bin"
 
           printf 'int add(int a, int b){return a+b;}\nint main(void){return add(1,2)-3;}\n' > smoke-cv.c
-          "$CLANG" --target="$TARGET" -g -o smoke-cv.exe smoke-cv.c
+          # CodeView is what lld embeds; -g alone is DWARF on this target, so
+          # ask for -gcodeview explicitly (the driver then passes -debug to
+          # lld-link because the -g_Group match is not -g0).
+          "$CLANG" --target="$TARGET" -g -gcodeview -o smoke-cv.exe smoke-cv.c
           "$BIN/llvm-objdump" -h smoke-cv.exe | tee smoke-cv.sections
-          grep -q "\.debug\\$S" smoke-cv.sections
-          grep -q "\.debug\\$T" smoke-cv.sections
-          echo "CodeView sections embedded in the linked image (-g -> lld-link -debug)"
+          # COFF stores names longer than 8 chars in the section-header string
+          # table, so objdump prints the `/N` reference, not `.debug$S`: match
+          # the raw image instead of the objdump listing.
+          strings smoke-cv.exe | grep -qF ".debug$S"
+          strings smoke-cv.exe | grep -qF ".debug$T"
+          echo "CodeView sections embedded in the linked image (-gcodeview -> lld-link -debug)"
 
       # -----------------------------------------------------------------
       # Package
