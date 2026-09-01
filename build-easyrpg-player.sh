@@ -145,8 +145,10 @@ if [ ! -f "$PREFIX/lib/libiconv.a" ]; then
     #   fallbacks, and the undefined _WIN32_WINNT_VISTA evaluates to 0,
     #   silently claiming Vista and calling GetFinalPathNameByHandleA
     #   directly.  Defining the constant restores the guarded path.
+    # - malloc's ptrdiff probe also guesses "no" cross-hosted and forces
+    #   the rpl bodies back on for both malloc and realloc.
     gl_cv_func_free_preserves_errno=yes ac_cv_func_raise=yes \
-    gl_cv_func_malloc_posix=yes \
+    gl_cv_func_malloc_posix=yes gl_cv_malloc_ptrdiff=yes \
     CFLAGS="-g -O2 -D_WIN32_WINNT_VISTA=0x0600" \
     ./configure --host="$CROSS" --prefix="$PREFIX" \
       --disable-shared --enable-static --disable-nls
