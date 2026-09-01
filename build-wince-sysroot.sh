@@ -28,7 +28,7 @@
 #     libmingwex.a             mingwrt C library supplement (CE object set)
 #     libceoldname.a           old-name aliases via COREDLL (mingwrt)
 #     libcoredll.a libcoredll3.a libcoredll4.a libcoredll6.a
-                                  COREDLL import libraries by CE version (mingwrt)
+#                               COREDLL import libraries by CE version (mingwrt)
 #     lib*.a                   w32api libce import libraries
 #     libpthread.a             optional; link with -mthreads / -pthread
 #     libposix.a               optional POSIX shim; not on the default link line
