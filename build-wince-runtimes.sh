@@ -123,13 +123,15 @@ cmake -S "$REPO_ROOT/runtimes" -B "$BLD/runtimes" \
   -DLIBCXX_STATICALLY_LINK_ABI_IN_STATIC_LIBRARY=ON \
   -DLIBCXX_ENABLE_MONOTONIC_CLOCK=ON \
   -DLIBCXX_ENABLE_THREADS=OFF \
-  # fstream needs the filesystem configuration gate (_LIBCPP_HAS_FILESYSTEM);
-# without it <fstream> is an empty shell and nothing using ifstream builds.
-# The fs sources stay unreferenced at application link time (Player/liblcf
-# use no std::filesystem), so they cost nothing there.
--DLIBCXX_ENABLE_FILESYSTEM=ON \
+  -DLIBCXX_ENABLE_FILESYSTEM=ON \
   -DLIBCXX_ENABLE_WIDE_CHARACTERS=ON \
   -DLIBCXX_HERMETIC_STATIC_LIBRARY=ON
+
+# LIBCXX_ENABLE_FILESYSTEM stays ON: <fstream> is gated on the
+# filesystem configuration macro, and OFF turns it into an empty shell
+# that nothing using ifstream can compile against.  The fs sources stay
+# unreferenced at application link time (Player/liblcf use no
+# std::filesystem), so they cost nothing there.
 
 # The runtimes umbrella is one Ninja graph.  Subdirs have no build.ninja
 # (CI 33362273917: ninja: loading 'build.ninja' after libc++.a linked).
