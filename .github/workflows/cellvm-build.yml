@@ -163,6 +163,8 @@ jobs:
             llvm-project/llvm/test/MC/ARM/wince-seh-pdata.s \
             llvm-project/llvm/test/MC/ARM/wince-armasm.s \
             llvm-project/llvm/test/MC/ARM/wince-armasm-labels.s \
+            llvm-project/llvm/test/MC/ARM/wince-armasm-data.s \
+            llvm-project/llvm/test/MC/ARM/wince-armasm-cond.s \
             llvm-project/llvm/test/CodeGen/ARM/wince-seh-parent-frame.ll \
             llvm-project/llvm/test/CodeGen/ARM/wince-soft-float.ll
 
