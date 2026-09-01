@@ -129,6 +129,15 @@ if [ ! -f "$PREFIX/lib/libiconv.a" ]; then
   tar -xzf libiconv-1.17.tar.gz
   (
     cd libiconv-1.17
+    # Cross-configured gnulib guesses wrong on CE for two knobs whose
+    # "no" answers pull replacement code that cannot compile here:
+    # - free.c's rpl_free body calls free() after #undef free, but the
+    #   gnulib stdlib.h never includes the system header, so nothing
+    #   declares free any more.
+    # - raise.c falls back to kill(getpid(), sig); COREDLL has neither.
+    # POSIX-compliant free and a working raise() are the honest answers
+    # for this CRT, so preset the probes.
+    gl_cv_func_free_posix=yes ac_cv_func_raise=yes \
     ./configure --host="$CROSS" --prefix="$PREFIX" \
       --disable-shared --enable-static --disable-nls
     make -j"$JOBS"
