@@ -15,7 +15,7 @@ PREFIX  ?= /usr/local
 OUT     ?= easyrpg-player.exe
 
 # UNDER_CE is MaxSignal's clock/helper gate. Do not invent SUPPORT_AUDIO.
-CPPFLAGS += -DUSE_SDL=1 -DUNICODE -D_UNICODE -DNDEBUG
+CPPFLAGS += -DUSE_SDL=1 -DUNICODE -D_UNICODE -DNDEBUG -DWINCEHELPER__STD__TO_STRING
 CPPFLAGS += -I. -Isrc
 CPPFLAGS += -I$(PREFIX)/include
 CPPFLAGS += -I$(PREFIX)/include/SDL
