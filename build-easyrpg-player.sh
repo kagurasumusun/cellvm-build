@@ -147,7 +147,10 @@ if [ ! -f "$PREFIX/lib/libiconv.a" ]; then
     #   the rpl bodies back on for both malloc and realloc.
     gl_cv_func_free_preserves_errno=yes ac_cv_func_raise=yes \
     gl_cv_func_malloc_posix=yes gl_cv_malloc_ptrdiff=yes \
-    CFLAGS="-g -O2 -D_WIN32_WINNT_VISTA=0x0600" \
+    # clang 19 turns C99+ implicit declarations of library functions into
+    # errors; gnulib's srclib (fcntl.c:139 calls memset) never includes
+    # <string.h>.  A warning is fine - memset/strlen resolve in the CRT.
+    CFLAGS="-g -O2 -D_WIN32_WINNT_VISTA=0x0600 -Wno-implicit-function-declaration" \
     ./configure --host="$CROSS" --prefix="$PREFIX" \
       --disable-shared --enable-static --disable-nls
     make -j"$JOBS"
