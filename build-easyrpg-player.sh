@@ -242,7 +242,7 @@ test -d Player-0.6.2.3-wince
 cp -a "$OVERLAY/Makefile" \
   Player-0.6.2.3-wince/Makefile
 
-cp -a "$OVERLAY/finder.cpp" \
+cp -a "$OVERLAY/filefinder.cpp" \
   Player-0.6.2.3-wince/src/filefinder.cpp
 
 cp -a "$OVERLAY/wincehelper.h" \
