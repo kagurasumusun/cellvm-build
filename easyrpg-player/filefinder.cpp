@@ -238,7 +238,7 @@ namespace {
 		return normal_search();
 	}
 
-	std::string FindFile(const std::string& dir, const std::string& name, const char* exts[]) {
+	std::string FindFile(const std::string &dir, const std::string& name, const char* exts[]) {
 		const std::shared_ptr<FileFinder::DirectoryTree> tree = FileFinder::GetDirectoryTree();
 		std::string ret = FindFile(*tree, dir, name, exts);
 		if (!ret.empty()) {
@@ -416,6 +416,7 @@ std::string GetFontsPath() {
 			WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS | WC_COMPOSITECHECK, path, MAX_PATH, fpath, MAX_PATH, NULL, NULL);
 #else
 			WideCharToMultiByte(CP_ACP, WC_COMPOSITECHECK, path, MAX_PATH, fpath, MAX_PATH, NULL, NULL);
+#endif
 #endif
 			fonts_path = FileFinder::MakePath(fpath, "");
 		}
@@ -736,7 +737,7 @@ bool FileFinder::IsValidProject(DirectoryTree const & dir) {
 	return IsRPG2kProject(dir) || IsEasyRpgProject(dir);
 }
 
-std::string FileFinder::FindDefault(FileFinder::DirectoryTree const &tree, const std::string& dir, const std::string& name,	const char **exts) {
+std::string FileFinder::FindDefault(FileFinder::DirectoryTree const &tree, const std::string &dir, const std::string &name,	const char **exts) {
 	return FindFile(tree, dir, name, exts);
 }
 
