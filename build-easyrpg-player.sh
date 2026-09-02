@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build MaxSignal/Player 0.6.2.3-wince (no audio) with the LLVM/Clang
-# WinCE toolchain. Overlay Makefiles only; do not patch app C++.
+# WinCE toolchain. Overlay the WinCE Makefile and two required source
+# compatibility fixes.
 #
 # Official Player zip only. Deps: zlib, libpng, pixman, libiconv,
 # SDL 1.2.15 (GDI), liblcf 0.6.2.
@@ -60,19 +61,22 @@ if [ ! -f "$PREFIX/lib/libz.a" ]; then
   fetch https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz zlib-1.3.1.tar.gz
   rm -rf zlib-1.3.1
   tar -xzf zlib-1.3.1.tar.gz
+
   # Build libz.a only — the gcc makefile's `all` also links example_d.exe.
   make -C zlib-1.3.1 -f win32/Makefile.gcc -j"$JOBS" \
     PREFIX="$CROSS-" \
     SHAREDLIB= SHAREDLIBV= SHAREDLIBM= \
     libz.a
+
   mkdir -p "$PREFIX/include" "$PREFIX/lib" "$PREFIX/lib/pkgconfig"
   cp -a zlib-1.3.1/zconf.h zlib-1.3.1/zlib.h "$PREFIX/include/"
   cp -a zlib-1.3.1/libz.a "$PREFIX/lib/"
+
   cat >"$PREFIX/lib/pkgconfig/zlib.pc" <<EOF
 prefix=$PREFIX
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/lib
-includedir=\${prefix}/include
+includedir=\${exec_prefix}/include
 Name: zlib
 Version: 1.3.1
 Libs: -L\${libdir} -lz
@@ -85,18 +89,27 @@ if [ ! -f "$PREFIX/lib/libpng16.a" ] && [ ! -f "$PREFIX/lib/libpng.a" ]; then
   fetch https://github.com/pnggroup/libpng/archive/refs/tags/v1.6.43.tar.gz libpng-1.6.43.tar.gz
   rm -rf libpng-1.6.43
   tar -xzf libpng-1.6.43.tar.gz
-  # Their scripts/makefile.gcc. Do not patch libpng C. libpng.a only (skip pngtest).
+
+  # Their scripts/makefile.gcc. Do not patch libpng C.
+  # Build libpng.a only (skip pngtest).
   make -C libpng-1.6.43 -f scripts/makefile.gcc -j"$JOBS" \
     CC="$CC" AR="$AR" RANLIB="$RANLIB" \
     ZLIBINC="$PREFIX/include" ZLIBLIB="$PREFIX/lib" \
     CFLAGS="-O2 -Wall -include $OVERLAY/ce-strerror.h" \
     libpng.a
+
   mkdir -p "$PREFIX/include" "$PREFIX/include/libpng16" "$PREFIX/lib"
   cp -a libpng-1.6.43/libpng.a "$PREFIX/lib/libpng.a"
   ln -sf libpng.a "$PREFIX/lib/libpng16.a"
-  cp -a libpng-1.6.43/png.h libpng-1.6.43/pngconf.h libpng-1.6.43/pnglibconf.h \
+
+  cp -a libpng-1.6.43/png.h \
+    libpng-1.6.43/pngconf.h \
+    libpng-1.6.43/pnglibconf.h \
     "$PREFIX/include/"
-  cp -a libpng-1.6.43/png.h libpng-1.6.43/pngconf.h libpng-1.6.43/pnglibconf.h \
+
+  cp -a libpng-1.6.43/png.h \
+    libpng-1.6.43/pngconf.h \
+    libpng-1.6.43/pnglibconf.h \
     "$PREFIX/include/libpng16/"
 fi
 
@@ -105,8 +118,10 @@ if [ ! -f "$PREFIX/lib/libpixman-1.a" ]; then
   fetch https://www.cairographics.org/releases/pixman-0.42.2.tar.gz pixman-0.42.2.tar.gz
   rm -rf pixman-0.42.2
   tar -xzf pixman-0.42.2.tar.gz
+
   (
     cd pixman-0.42.2
+
     ./configure --host="$CROSS" --prefix="$PREFIX" \
       --disable-shared --enable-static \
       --disable-gtk --disable-libpng \
@@ -114,7 +129,9 @@ if [ ! -f "$PREFIX/lib/libpixman-1.a" ]; then
       --disable-arm-iwmmxt --disable-mmx --disable-sse2 --disable-ssse3 \
       --disable-vmx --disable-mips-dspr2 --disable-loongson-mmi \
       pixman_cv_have_tls=no ac_cv_tls=none
-    # `make all` also links test EXEs (CreateMutexA). Install the library only.
+
+    # `make all` also links test EXEs (CreateMutexA).
+    # Install the library only.
     make -C pixman -j"$JOBS"
     make -C pixman install
   )
@@ -125,34 +142,46 @@ if [ ! -f "$PREFIX/lib/libiconv.a" ]; then
   fetch https://ftp.gnu.org/gnu/libiconv/libiconv-1.17.tar.gz libiconv-1.17.tar.gz
   rm -rf libiconv-1.17
   tar -xzf libiconv-1.17.tar.gz
+
   (
     cd libiconv-1.17
+
     # Cross-configured gnulib guesses wrong on CE for two knobs whose
     # "no" answers pull replacement code that cannot compile here:
+    #
     # - free.c's rpl_free body calls free() after #undef free, but the
     #   gnulib stdlib.h never includes the system header, so nothing
     #   declares free any more.
+    #
     # - raise.c falls back to kill(getpid(), sig); COREDLL has neither.
+    #
     # POSIX-compliant free and a working raise() are the honest answers
     # for this CRT, so preset the probes.
+    #
     # - malloc/realloc/free follow the same probe chain; a "no" answer
     #   pulls rpl bodies that #undef the name and then call it undeclared
     #   (gnulib's replacement stdlib.h never includes the system header).
+    #
     # - stat-w32 decides Vista-vs-dynamic-load with
     #   _WIN32_WINNT >= _WIN32_WINNT_VISTA; w32api leaves both at their
     #   fallbacks, and the undefined _WIN32_WINNT_VISTA evaluates to 0,
     #   silently claiming Vista and calling GetFinalPathNameByHandleA
-    #   directly.  Defining the constant restores the guarded path.
+    #   directly. Defining the constant restores the guarded path.
+    #
     # - malloc's ptrdiff probe also guesses "no" cross-hosted and forces
     #   the rpl bodies back on for both malloc and realloc.
-    gl_cv_func_free_preserves_errno=yes ac_cv_func_raise=yes \
-    gl_cv_func_malloc_posix=yes gl_cv_malloc_ptrdiff=yes \
+    gl_cv_func_free_preserves_errno=yes \
+    ac_cv_func_raise=yes \
+    gl_cv_func_malloc_posix=yes \
+    gl_cv_malloc_ptrdiff=yes \
+    \
     # clang 19 turns C99+ implicit declarations of library functions into
     # errors; gnulib's srclib (fcntl.c:139 calls memset) never includes
-    # <string.h>.  A warning is fine - memset/strlen resolve in the CRT.
+    # <string.h>. A warning is fine - memset/strlen resolve in the CRT.
     CFLAGS="-g -O2 -D_WIN32_WINNT_VISTA=0x0600 -Wno-implicit-function-declaration" \
     ./configure --host="$CROSS" --prefix="$PREFIX" \
       --disable-shared --enable-static --disable-nls
+
     make -j"$JOBS"
     make install
   )
@@ -163,15 +192,24 @@ if [ ! -f "$PREFIX/lib/libSDL.a" ]; then
   fetch https://github.com/libsdl-org/SDL-1.2/archive/refs/tags/release-1.2.15.tar.gz SDL-1.2.15.tar.gz
   rm -rf SDL-1.2-release-1.2.15
   tar -xzf SDL-1.2.15.tar.gz
+
   # Vanilla 1.2.15 assumes the GAPI driver whenever _WIN32_WCE is defined;
   # this build is WINDIB-only, so gate its hooks on the driver macro, drop
   # the desktop GetMenu()/USER32 TrackMouseEvent lookups (COREDLL has
   # neither) - see sdl-1.2.15-wce.patch.
   patch -d SDL-1.2-release-1.2.15 -p1 < "$OVERLAY/sdl-1.2.15-wce.patch"
-  cp -a "$OVERLAY/SDL_config.h" SDL-1.2-release-1.2.15/include/SDL_config.h
-  cp -a "$OVERLAY/Makefile.sdl" SDL-1.2-release-1.2.15/Makefile
-  make -C SDL-1.2-release-1.2.15 -j"$JOBS" CROSS="$CROSS" PREFIX="$PREFIX"
-  make -C SDL-1.2-release-1.2.15 install CROSS="$CROSS" PREFIX="$PREFIX"
+
+  cp -a "$OVERLAY/SDL_config.h" \
+    SDL-1.2-release-1.2.15/include/SDL_config.h
+
+  cp -a "$OVERLAY/Makefile.sdl" \
+    SDL-1.2-release-1.2.15/Makefile
+
+  make -C SDL-1.2-release-1.2.15 -j"$JOBS" \
+    CROSS="$CROSS" PREFIX="$PREFIX"
+
+  make -C SDL-1.2-release-1.2.15 install \
+    CROSS="$CROSS" PREFIX="$PREFIX"
 fi
 
 # --- liblcf 0.6.2 ---
@@ -179,10 +217,18 @@ if [ ! -f "$PREFIX/lib/liblcf.a" ]; then
   fetch https://github.com/EasyRPG/liblcf/archive/refs/tags/0.6.2.tar.gz liblcf-0.6.2.tar.gz
   rm -rf liblcf-0.6.2
   tar -xzf liblcf-0.6.2.tar.gz
-  cp -a "$OVERLAY/liblcf-config.h" liblcf-0.6.2/config.h
-  cp -a "$OVERLAY/Makefile.liblcf" liblcf-0.6.2/Makefile
-  make -C liblcf-0.6.2 -j"$JOBS" CROSS="$CROSS" PREFIX="$PREFIX"
-  make -C liblcf-0.6.2 install CROSS="$CROSS" PREFIX="$PREFIX"
+
+  cp -a "$OVERLAY/liblcf-config.h" \
+    liblcf-0.6.2/config.h
+
+  cp -a "$OVERLAY/Makefile.liblcf" \
+    liblcf-0.6.2/Makefile
+
+  make -C liblcf-0.6.2 -j"$JOBS" \
+    CROSS="$CROSS" PREFIX="$PREFIX"
+
+  make -C liblcf-0.6.2 install \
+    CROSS="$CROSS" PREFIX="$PREFIX"
 fi
 
 # --- Player (official zip) ---
@@ -190,32 +236,41 @@ fetch "$PLAYER_ZIP_URL" player-0.6.2.3-wince.zip
 rm -rf Player-0.6.2.3-wince
 unzip -qo player-0.6.2.3-wince.zip
 test -d Player-0.6.2.3-wince
-cp -a "$OVERLAY/Makefile" Player-0.6.2.3-wince/Makefile
-# --- WinCE source fixes ---
-# Replace the two upstream sources with the known WinCE-compatible versions.
-# This keeps the official Player archive untouched and makes the fixes
-# reproducible from the repository's easyrpg-player/ overlay.
+
+# Overlay the WinCE-specific Makefile and source fixes.
+# The official Player archive itself is not modified.
+cp -a "$OVERLAY/Makefile" \
+  Player-0.6.2.3-wince/Makefile
+
 cp -a "$OVERLAY/finder.cpp" \
- Player-0.6.2.3-wince/src/filefinder.cpp
+  Player-0.6.2.3-wince/src/filefinder.cpp
+
 cp -a "$OVERLAY/wincehelper.h" \
- Player-0.6.2.3-wince/src/wincehelper.h
-make -C Player-0.6.2.3-wince -j"$JOBS" CROSS="$CROSS" PREFIX="$PREFIX"
+  Player-0.6.2.3-wince/src/wincehelper.h
+
+make -C Player-0.6.2.3-wince -j"$JOBS" \
+  CROSS="$CROSS" PREFIX="$PREFIX"
 
 EXE=Player-0.6.2.3-wince/easyrpg-player.exe
 test -s "$EXE"
+
 DEST=${DEST:-$PREFIX/../player-wince}
 mkdir -p "$DEST"
 cp -a "$EXE" "$DEST/"
+
 if command -v llvm-readobj >/dev/null; then
-  llvm-readobj --file-headers "$EXE" > "$DEST/easyrpg-player.exe.headers.txt"
+  llvm-readobj --file-headers "$EXE" \
+    > "$DEST/easyrpg-player.exe.headers.txt"
 fi
+
 {
   echo "upstream: MaxSignal/Player 0.6.2.3-wince"
   echo "zip: $PLAYER_ZIP_URL"
   echo "audio: off (no SUPPORT_AUDIO)"
   echo "ui: SDL 1.2 WINDIB"
-  echo "player C++: unmodified (Makefile overlay)"
+  echo "player C++: two WinCE source overlays (filefinder.cpp, wincehelper.h)"
   sha256sum "$DEST/easyrpg-player.exe"
 } > "$DEST/SHA256SUMS"
+
 echo "built $EXE"
 ls -l "$EXE"
