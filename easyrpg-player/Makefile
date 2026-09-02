@@ -33,6 +33,7 @@ SRCS = \
 	src/async_handler.cpp \
 	src/audio.cpp \
 	src/audio_secache.cpp \
+	src/audio_decoder.cpp \
 	src/background.cpp \
 	src/baseui.cpp \
 	src/battle_animation.cpp \
