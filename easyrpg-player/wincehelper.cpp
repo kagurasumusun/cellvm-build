@@ -144,7 +144,7 @@ along with GCC; see the file COPYING3.  If not see
 
 static int utf8towchar(const char *utf8, wchar_t **outbuf)
 {
-  size_t buflen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, (void *)0, 0);
+  size_t buflen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, (wchar_t *)0, 0);
   wchar_t *buf = (wchar_t*)calloc(buflen, sizeof(wchar_t));
   if (MultiByteToWideChar(CP_UTF8, 0, utf8, -1, buf, buflen) == 0) {
     free(buf);
