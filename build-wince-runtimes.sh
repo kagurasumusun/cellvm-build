@@ -125,7 +125,15 @@ cmake -S "$REPO_ROOT/runtimes" -B "$BLD/runtimes" \
   -DLIBCXX_ENABLE_THREADS=OFF \
   -DLIBCXX_ENABLE_FILESYSTEM=ON \
   -DLIBCXX_ENABLE_WIDE_CHARACTERS=ON \
+  -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF \
   -DLIBCXX_HERMETIC_STATIC_LIBRARY=ON
+
+# LIBCXX_ENABLE_TIME_ZONE_DATABASE stays OFF: the runtimes configure runs
+# on a Linux CI host, so CMake's default (ON for CMAKE_SYSTEM_NAME=Linux)
+# would add the experimental tzdb sources, whose __libcpp_tzdb_directory
+# supports only __linux__ targets and #errors on WinCE ("unknown path to
+# the IANA Time Zone Database").  WinCE has no IANA tz database anyway;
+# time zone support in <chrono> is disabled by this flag.
 
 # LIBCXX_ENABLE_FILESYSTEM stays ON: <fstream> is gated on the
 # filesystem configuration macro, and OFF turns it into an empty shell
