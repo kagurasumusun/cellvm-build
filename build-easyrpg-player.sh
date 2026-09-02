@@ -191,6 +191,14 @@ rm -rf Player-0.6.2.3-wince
 unzip -qo player-0.6.2.3-wince.zip
 test -d Player-0.6.2.3-wince
 cp -a "$OVERLAY/Makefile" Player-0.6.2.3-wince/Makefile
+# --- WinCE source fixes ---
+# Replace the two upstream sources with the known WinCE-compatible versions.
+# This keeps the official Player archive untouched and makes the fixes
+# reproducible from the repository's easyrpg-player/ overlay.
+cp -a "$OVERLAY/finder.cpp" \
+ Player-0.6.2.3-wince/src/filefinder.cpp
+cp -a "$OVERLAY/wincehelper.h" \
+ Player-0.6.2.3-wince/src/wincehelper.h
 make -C Player-0.6.2.3-wince -j"$JOBS" CROSS="$CROSS" PREFIX="$PREFIX"
 
 EXE=Player-0.6.2.3-wince/easyrpg-player.exe
