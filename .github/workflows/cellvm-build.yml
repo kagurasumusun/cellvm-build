@@ -22,7 +22,7 @@ name: cellvm-build
 
 on:
   push:
-    branches: [main]
+    branches: [wince]
   workflow_dispatch:
 
 permissions:
@@ -237,6 +237,36 @@ jobs:
             --target "$TARGET" \
             --build-dir "$PWD/build-wince-runtimes"
 
+      - name: "Stage 3: C++ header-collision smoke"
+        run: |
+          CLANG="$PWD/install/wince-llvm/bin/clang"
+
+          # every libc++ header a windows.h TU is likely to pull, in the
+          # order third-party code actually uses (windows chain first)
+          cat > smoke-cxx.cpp <<'EOF'
+          #include <windows.h>
+          #include <functional>
+          #include <string>
+          #include <map>
+          #include <memory>
+          #include <queue>
+          std::function<int(int)> g;
+          int main() {
+            std::string s("ok");
+            std::map<int, std::string> m;
+            std::queue<char> q;
+            auto p = std::make_unique<int>(1);
+            m[1] = s; q.push('x');
+            return g ? 0 : (*p == 1 ? 0 : 1);
+          }
+          EOF
+          sed -i 's/^          //' smoke-cxx.cpp
+          "$CLANG" --target="$TARGET" -x c++ -c smoke-cxx.cpp -o smoke-cxx.o
+
+          # the case-alias forwarders shipped in the overlay
+          printf '#include <Windows.h>\n#include <Shellapi.h>\nint main(){return 0;}\n' > smoke-case.cpp
+          "$CLANG" --target="$TARGET" -x c++ -fsyntax-only smoke-case.cpp
+
       - name: "Stage 3: CodeView debug smoke-check"
         run: |
           CLANG="$PWD/install/wince-llvm/bin/clang"
@@ -364,6 +394,7 @@ jobs:
           export DEST="$PWD/products/easyrpg-player"
           export WORK="$RUNNER_TEMP/easyrpg-wince"
           export JOBS="$(nproc)"
+          export SYSROOT_INC="$PWD/install/wince-llvm/wince-sysroot/include"
           sh build-easyrpg-player.sh
 
       - name: Job summary

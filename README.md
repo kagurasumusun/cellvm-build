@@ -29,7 +29,9 @@ pthread-win32/  submodule, kagurasumusun/pthread-win32 @ master
 sysroot/
   gmon/           -pg sampling profiler (gcrt3.c, libgmon.c)
   posix/          execv/execl(p)/system/waitpid/popen/pclose/signal/alarm + sys/wait.h
-  include-overlay/  headers overlaid last (SAL, intrin.h)
+  include-overlay/  headers overlaid last (SAL; MSVC-case aliases Windows.h/Shellapi.h)
+  gen-include-aliases.py  emit case-alias forwarders for an app tree's
+                  MSVC-style #include spellings (run by Stage 5)
 build-wince-sysroot.sh      Stage 2: assemble the sysroot from the submodules
 build-wince-runtimes.sh     Stage 3: compiler-rt builtins + libunwind/libc++abi/libc++
 build-easyrpg-player.sh     Stage 5: EasyRPG Player deps + player (official zip)
@@ -99,8 +101,8 @@ unmodified CeGCC Makefiles already use (they only bind `--target=arm-pc-wince`).
 ## CI
 
 `.github/workflows/cellvm-build.yml` runs the full pipeline on every push to
-`main` (and on manual dispatch), on ubuntu-24.04, with ccache + Ninja
-build-directory caching. It uploads the toolchain tarball, the
+`wince` (the repository's branch; and on manual dispatch), on ubuntu-24.04,
+with ccache + Ninja build-directory caching. It uploads the toolchain tarball, the
 glpi-wince-agent and the EasyRPG Player builds.
 
 ## Documentation
@@ -112,6 +114,24 @@ The authoritative specs live in the `llvm-project` submodule:
 * `llvm-project/WINCE-HANDOFF.md` — handoff record (§14 = this
   reorganization).
 * `llvm-project/utils/wince/STATUS.md` — current green state.
+
+## Collision / duplication policies (2026-09-02 sweep)
+
+* **COREDLL defs**: `mingwrt/coredll{,4,6}.def` is the single source of
+  truth; `w32api/libce/` keeps a byte-identical mirror for its own
+  cegcc-lineage build.  `build-wince-sysroot.sh` fails the build if the
+  mirror drifts; `audit-coredll.py` cross-checks both against device dumps.
+* **excpt.h**: w32api's (ARM-shaped, included by windows.h) is canonical;
+  mingwrt's x86-legacy copy is deleted.
+* **Header macro namespace**: w32api/mingwrt must not define macros that
+  collide with C++ runtime identifiers.  Full sweep recorded in
+  llvm-project `WINCE-HANDOFF.md` §17; `basetyps.h __small` (the one live
+  hit) is excluded under clang, like `_mingw.h` already did.
+* **#include case**: the sysroot ships forwarder aliases for the common
+  MSVC spellings (`Windows.h`, `Shellapi.h`); `gen-include-aliases.py`
+  additionally generates aliases for any spelling a specific app tree
+  uses (Stage 5).  A C++ header-collision smoke (windows.h + libc++) runs
+  in Stage 3 so this class of breakage is caught in CI, not at Stage 5.
 
 ## Verification status
 

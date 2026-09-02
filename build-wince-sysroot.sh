@@ -114,6 +114,21 @@ for d in "$MINGWRT_SRC" "$W32API_SRC" "$PTHREAD_SRC"; do
   fi
 done
 
+# --- COREDLL def mirror guard ------------------------------------------------
+# mingwrt/coredll{,4,6}.def is the single source of truth for the COREDLL
+# import surface (mingwrt's Makefile builds libcoredll*.a from it).  w32api
+# keeps a byte-identical mirror in libce/ for its own cegcc-lineage build,
+# and audit-coredll.py cross-checks both against device dumps.  The mirror
+# must never drift silently: fail the build the moment the copies differ.
+for f in coredll.def coredll4.def coredll6.def; do
+  if ! cmp -s "$MINGWRT_SRC/$f" "$W32API_SRC/libce/$f"; then
+    echo "$PROGRAM: COREDLL def mirror drifted: mingwrt/$f != w32api/libce/$f" >&2
+    echo "  reconcile the two (copy the intended version over the other)" >&2
+    echo "  and commit both in the same change; see audit-coredll.py." >&2
+    exit 1
+  fi
+done
+
 # --- Tools -----------------------------------------------------------------
 CLANG="$TOOLCHAIN/clang"
 LLVM_AR="$(ls "$TOOLCHAIN"/llvm-ar* 2>/dev/null | head -1)"

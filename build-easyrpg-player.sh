@@ -251,6 +251,24 @@ cp -a "$OVERLAY/wincehelper.h" \
 cp -a "$OVERLAY/wincehelper.cpp" \
   Player-0.6.2.3-wince/src/wincehelper.cpp
 
+# MSVC-style case-insensitive #include spellings (<Windows.h> & co.): scan
+# the (unpatchable) Player tree against the sysroot and generate forwarding
+# headers for every spelling whose case differs.  The static overlay aliases
+# cover the known two; this catches anything else the zip uses.
+SYSROOT_INC=${SYSROOT_INC:-}
+if [ -n "$SYSROOT_INC" ] && command -v python3 >/dev/null; then
+  ALIAS="$WORK/include-aliases"
+  rm -rf "$ALIAS"
+  python3 "$OVERLAY/../sysroot/gen-include-aliases.py" \
+    --sysroot-include "$SYSROOT_INC" \
+    --source Player-0.6.2.3-wince/src \
+    --out "$ALIAS"
+  if [ -n "$(ls -A "$ALIAS" 2>/dev/null)" ]; then
+    CPPFLAGS="$CPPFLAGS -isystem $ALIAS"
+    export CPPFLAGS
+  fi
+fi
+
 make -C Player-0.6.2.3-wince -j"$JOBS" \
   CROSS="$CROSS" PREFIX="$PREFIX"
 
@@ -271,7 +289,8 @@ fi
   echo "zip: $PLAYER_ZIP_URL"
   echo "audio: off (no SUPPORT_AUDIO)"
   echo "ui: SDL 1.2 WINDIB"
-  echo "player C++: two WinCE source overlays (filefinder.cpp, wincehelper.h)"
+  echo "player C++: three WinCE source overlays (filefinder.cpp, wincehelper.h, wincehelper.cpp)"
+  echo "include case aliases: overlay (Windows.h, Shellapi.h) + generated"
   sha256sum "$DEST/easyrpg-player.exe"
 } > "$DEST/SHA256SUMS"
 
