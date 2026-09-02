@@ -71,9 +71,14 @@ while [ $# -gt 0 ]; do
 done
 
 case "$TARGET" in
-  # llvm-dlltool's machine names: "arm" (the GNU "armce"/"arm-wince-pe"
-  # spellings are binutils-only; llvm-dlltool rejects them with
-  # "unknown target").
+  # DLLTOOL_MACHINE: the fork's llvm-dlltool (llvm-wince) maps "armce"
+  # to IMAGE_FILE_MACHINE_ARM (0x1c0) - the Windows CE ARM machine that
+  # the fork's clang/lld also use for arm-pc-wince (lld/COFF/InputFiles:
+  # isWindowsCE() ? IMAGE_FILE_MACHINE_ARM : ARMNT).  Do not use "arm"
+  # here: that maps to ARMNT (0x1c4, desktop Thumb-2), and the resulting
+  # import libraries fail to link with "machine type arm conflicts with
+  # armce".  (Stock llvm-dlltool does reject "armce", so this script is
+  # fork-toolchain specific by design.)
   arm-pc-wince*|arm-mingw32ce*) HOST_ALIAS="arm-mingw32ce"; DLLTOOL_MACHINE="armce" ;;
   i386-pc-wince*|i386-mingw32ce) HOST_ALIAS="i386-mingw32ce"; DLLTOOL_MACHINE="i386" ;;
   *) echo "$PROGRAM: unsupported WinCE target '$TARGET'" >&2; exit 1 ;;
