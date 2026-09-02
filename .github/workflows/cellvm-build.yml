@@ -22,7 +22,6 @@ name: cellvm-build
 
 on:
   push:
-    branches: [wince]
   workflow_dispatch:
 
 permissions:
