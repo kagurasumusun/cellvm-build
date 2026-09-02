@@ -100,10 +100,12 @@ unmodified CeGCC Makefiles already use (they only bind `--target=arm-pc-wince`).
 
 ## CI
 
-`.github/workflows/cellvm-build.yml` runs the full pipeline on every push to
-`wince` (the repository's branch; and on manual dispatch), on ubuntu-24.04,
-with ccache + Ninja build-directory caching. It uploads the toolchain tarball, the
-glpi-wince-agent and the EasyRPG Player builds.
+`.github/workflows/cellvm-build.yml` runs the full pipeline on every push
+(all branches; the work line is `main`) and on manual dispatch, on
+ubuntu-24.04, with ccache + Ninja build-directory caching. It uploads the
+toolchain tarball, the glpi-wince-agent and the EasyRPG Player builds.
+Submodule pins are bumped to states the compiler-side CI (llvm-project
+Stage 1 + WinCE lit gate) has already passed.
 
 ## Documentation
 
@@ -135,6 +137,16 @@ The authoritative specs live in the `llvm-project` submodule:
 
 ## Verification status
 
+**Stage 5 green (2026-09-02): the full pipeline links the EasyRPG Player.**
+[Run 33600018503](https://github.com/kagurasumusun/cellvm-build/actions/runs/33600018503)
+at `c83b9f4` produced `easyrpg-player.exe` (5,346,816 bytes; MaxSignal
+0.6.2.3-wince + overlay, audio off, SDL 1.2 WINDIB). PE verified:
+`IMAGE_FILE_MACHINE_ARM`, subsystem `IMAGE_SUBSYSTEM_WINDOWS_CE_GUI (9)`,
+entry `.text+0` (WinMainCRTStartup), imports/IAT resolved, sections
+`.text/.rdata/.data/.ctors/.dtors/.ARM.exidx/.ARM.extab` (EHABI index
+merged by lld), relocations stripped (fixed image base).
+
 CI compiles and links; **on-device execution is not yet verified** (no CE
 hardware in the loop). See the llvm-project docs above for the per-feature
-verification matrix.
+verification matrix and WINCE-HANDOFF.md §18 for the Stage 5 cause→fix
+table.
