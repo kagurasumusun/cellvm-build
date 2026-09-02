@@ -274,8 +274,8 @@ fi
 # easyrpg-player.pdb next to the image (host debugger material; the CE
 # loader ignores the debug directory).
 if [ "${PLAYER_PDB:-0}" = 1 ]; then
-  export CXXFLAGS="$CXXFLAGS -gcodeview"
-  export LDFLAGS="$LDFLAGS -Wl,/debug"
+  export CXXFLAGS="${CXXFLAGS:-} -gcodeview"
+  export LDFLAGS="${LDFLAGS:-} -Wl,/debug"
 fi
 
 make -C Player-0.6.2.3-wince -j"$JOBS" \
