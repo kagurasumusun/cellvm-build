@@ -86,3 +86,22 @@
  		AllKeys(1);
  #endif
  	}
+
+--- a/src/timer/wince/SDL_systimer.c
++++ b/src/timer/wince/SDL_systimer.c
+@@ -94,7 +94,14 @@
+ 
+ static UINT WIN_timer;
+ 
+-#if ( _WIN32_WCE <= 420 )
++/* This toolchain reaches CE 4.x-6.0 through COREDLL alone: coredll
++   exports no Multimedia Timer functions (timeSetEvent/timeBeginPeriod
++   are desktop winmm; CE SDKs shipped them as import-lib stubs, which we
++   do not invent).  Always take the threaded timer path - it needs only
++   CreateThread/SetEvent/WaitForSingleObject, all COREDLL exports - and
++   thereby skips the #else branch's #pragma comment(lib, "mmtimer.lib")
++   auto-link directive, which has no resolution here.  */
++#if 1 /* was: ( _WIN32_WCE <= 420 ) */
+ 
+ static HANDLE timersThread = 0;
+ static HANDLE timersQuitEvent = 0;

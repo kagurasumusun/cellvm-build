@@ -1,10 +1,9 @@
-/* WinCE mingwrt/coredll gaps used by libpng and pixman. Do not patch those trees. */
+/* WinCE mingwrt/coredll gaps used by libpng and pixman. Do not patch
+   those trees.  This file deliberately does NOT define strerror: the CRT
+   (mingwrt coredll_stubs.c) provides it, and defining it here too made
+   libcecompat.a duplicate the symbol against the always-linked CRT
+   member (lld-link: duplicate symbol: strerror, Stage 5). */
 #include <windows.h>
-
-char *strerror(int errnum) {
-  (void)errnum;
-  return "error";
-}
 
 int remove(const char *path) {
   extern int unlink(const char *);
