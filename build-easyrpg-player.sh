@@ -248,6 +248,9 @@ cp -a "$OVERLAY/filefinder.cpp" \
 cp -a "$OVERLAY/wincehelper.h" \
   Player-0.6.2.3-wince/src/wincehelper.h
 
+cp -a "$OVERLAY/wincehelper.cpp" \
+  Player-0.6.2.3-wince/src/wincehelper.cpp
+
 make -C Player-0.6.2.3-wince -j"$JOBS" \
   CROSS="$CROSS" PREFIX="$PREFIX"
 
