@@ -27,7 +27,7 @@
 #     libmingw32.a libm.a      mingwrt glue libraries (MINGW_OBJS(ce))
 #     libmingwex.a             mingwrt C library supplement (CE object set)
 #     libceoldname.a           old-name aliases via COREDLL (mingwrt)
-#     libcoredll.a libcoredll3.a libcoredll4.a libcoredll6.a
+#     libcoredll.a libcoredll4.a libcoredll6.a
 #                               COREDLL import libraries by CE version (mingwrt)
 #     lib*.a                   w32api libce import libraries
 #     libpthread.a             optional; link with -mthreads / -pthread
@@ -71,7 +71,10 @@ while [ $# -gt 0 ]; do
 done
 
 case "$TARGET" in
-  arm-pc-wince*|arm-mingw32ce*) HOST_ALIAS="arm-mingw32ce"; DLLTOOL_MACHINE="armce" ;;
+  # llvm-dlltool's machine names: "arm" (the GNU "armce"/"arm-wince-pe"
+  # spellings are binutils-only; llvm-dlltool rejects them with
+  # "unknown target").
+  arm-pc-wince*|arm-mingw32ce*) HOST_ALIAS="arm-mingw32ce"; DLLTOOL_MACHINE="arm" ;;
   i386-pc-wince*|i386-mingw32ce) HOST_ALIAS="i386-mingw32ce"; DLLTOOL_MACHINE="i386" ;;
   *) echo "$PROGRAM: unsupported WinCE target '$TARGET'" >&2; exit 1 ;;
 esac
@@ -113,7 +116,13 @@ LLVM_RANLIB="$(ls "$TOOLCHAIN"/llvm-ranlib* 2>/dev/null | head -1)"
 LLVM_DLLTOOL="$(ls "$TOOLCHAIN"/llvm-dlltool* 2>/dev/null | head -1)"
 LLVM_MC="$(ls "$TOOLCHAIN"/llvm-mc* 2>/dev/null | head -1)"
 LLVM_NM="$(ls "$TOOLCHAIN"/llvm-nm* 2>/dev/null | head -1)"
-for t in "$LLVM_AR" "$LLVM_RANLIB" "$LLVM_DLLTOOL"; do
+LLVM_OBJCOPY="$(ls "$TOOLCHAIN"/llvm-objcopy* 2>/dev/null | head -1)"
+# mingwrt's Makefile runs $(NM) and $(OBJCOPY) on the ARM PE import
+# libraries it just built (NM_LOOKUP + --redefine-sym in the lib%.a
+# rule).  Host GNU binutils nm/objcopy cannot read ARM PE and fail with
+# "file format not recognized", so force the LLVM tools.  LLVM_NM is
+# also required by the dlltool shim's --output-def branch.
+for t in "$LLVM_AR" "$LLVM_RANLIB" "$LLVM_DLLTOOL" "$LLVM_NM" "$LLVM_OBJCOPY"; do
   [ -n "$t" ] || { echo "$PROGRAM: required LLVM binary tool missing in $TOOLCHAIN" >&2; exit 1; }
 done
 
@@ -168,6 +177,8 @@ while [ \$# -gt 0 ]; do
     --def)        shift; ARGS="\$ARGS -d \$1" ;;
     --def=*)      ARGS="\$ARGS -d \$(echo \$1 | sed 's/^--def=//')" ;;
     --output-def) shift; OUTDEF="\$1" ;;
+    --output-lib) shift; ARGS="\$ARGS -l \$1" ;;
+    --dllname)    shift; ARGS="\$ARGS -D \$1" ;;   # GNU -> llvm spelling
     -U)           ;; # symbol decoration: llvm-dlltool infers from the machine
     --as|-S)      shift ;; # assembler name: ignored by llvm-dlltool
     --as=*)       ;;
@@ -210,6 +221,7 @@ if [ ! -f Makefile ]; then
   CC="$TARGET_CC" \
   AR="$LLVM_AR" RANLIB="$LLVM_RANLIB" \
   AS="${LLVM_MC:-$CLANG}" DLLTOOL="$BUILD/bin/dlltool" \
+  NM="$LLVM_NM" OBJCOPY="$LLVM_OBJCOPY" \
   CFLAGS="$MINGWRT_CFLAGS" \
   W32API_INCLUDE="-I $W32API_SRC/include" \
   /bin/sh "$MINGWRT_SRC/configure" \
@@ -219,8 +231,10 @@ if [ ! -f Makefile ]; then
     > configure.log 2>&1 || { tail -20 configure.log; exit 1; }
 fi
 # CRT0S(ce) + MINGW_OBJS(ce) archives + COREDLL import libraries (their rules).
+# libcoredll3.a is intentionally not built: CE 3.0 is out of scope (4.x/5.x/6.x
+# only) and mingwrt ships no coredll3.def.
 make -j "$JOBS" crt3.o dllcrt3.o CRT_noglob.o crtmt.o crtst.o \
-     libmingw32.a libm.a libcoredll.a libcoredll3.a libcoredll4.a libcoredll6.a libceoldname.a \
+     libmingw32.a libm.a libcoredll.a libcoredll4.a libcoredll6.a libceoldname.a \
      >> build.log 2>&1 || { tail -80 build.log; exit 1; }
 # mingwex CE object set (the Makefile selects MATHCE/STDIO_CE/etc. by host).
 make -j "$JOBS" -C mingwex libmingwex.a >> mingwex.log 2>&1 || \
@@ -228,7 +242,7 @@ make -j "$JOBS" -C mingwex libmingwex.a >> mingwex.log 2>&1 || \
 
 install -m 644 crt3.o dllcrt3.o CRT_noglob.o crtmt.o crtst.o \
   libmingw32.a libm.a libceoldname.a \
-  libcoredll.a libcoredll3.a libcoredll4.a libcoredll6.a "$SYSROOT/lib/"
+  libcoredll.a libcoredll4.a libcoredll6.a "$SYSROOT/lib/"
 install -m 644 mingwex/libmingwex.a "$SYSROOT/lib/"
 # libmingwthrd.a: mingwrt's own rule pairs crtmt.o with an import library
 # for its thread DLL (mingwm10.dll), and the shared make rule would drag in
@@ -253,6 +267,7 @@ if [ ! -f Makefile ]; then
   CC="$TARGET_CC" \
   AR="$LLVM_AR" RANLIB="$LLVM_RANLIB" \
   AS="${LLVM_MC:-$CLANG}" DLLTOOL="$BUILD/bin/dlltool" \
+  NM="$LLVM_NM" OBJCOPY="$LLVM_OBJCOPY" \
   CFLAGS="$MINGWRT_CFLAGS -nostdinc -isystem $MINGWRT_SRC/include -isystem $SYSROOT/include" \
   /bin/sh "$W32API_SRC/configure" \
     --host="$HOST_ALIAS" --target="$HOST_ALIAS" \
