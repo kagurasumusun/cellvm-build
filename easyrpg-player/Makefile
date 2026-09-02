@@ -32,6 +32,7 @@ LIBS     += -lSDLmain -lSDL -llcf -lpixman-1 -lpng16 -lz -liconv -lcecompat
 SRCS = \
 	src/async_handler.cpp \
 	src/audio.cpp \
+	src/audio_secache.cpp \
 	src/background.cpp \
 	src/baseui.cpp \
 	src/battle_animation.cpp \

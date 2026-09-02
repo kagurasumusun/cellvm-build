@@ -105,3 +105,46 @@
  
  static HANDLE timersThread = 0;
  static HANDLE timersQuitEvent = 0;
+--- a/src/video/windib/SDL_dibvideo.c
++++ b/src/video/windib/SDL_dibvideo.c
+@@ -624,10 +624,12 @@
+ 		return current;
+ 	}
+ 
++#if SDL_VIDEO_OPENGL
+ 	/* Clean up any GL context that may be hanging around */
+ 	if ( current->flags & SDL_OPENGL ) {
+ 		WIN_GL_ShutDown(this);
+ 	}
++#endif
+ 	SDL_resizing = 1;
+ 
+ 	/* Recalculate the bitmasks if necessary */
+@@ -909,6 +911,7 @@
+ 	SDL_resizing = 0;
+ 
+ 	/* Set up for OpenGL */
++#if SDL_VIDEO_OPENGL
+ 	if ( flags & SDL_OPENGL ) {
+ 		if ( WIN_GL_SetupWindow(this) < 0 ) {
+ 			return(NULL);
+@@ -916,6 +919,7 @@
+ 		video->flags |= SDL_OPENGL;
+ 	}
+ 
++#endif
+ 	/* JC 14 Mar 2006
+ 		Flush the message loop or this can cause big problems later
+ 		Especially if the user decides to use dialog boxes or assert()!
+@@ -1190,9 +1194,11 @@
+ 				ShowWindow(SDL_Window, SW_HIDE);
+ 			}
+ #endif
++#if SDL_VIDEO_OPENGL
+ 			if ( this->screen->flags & SDL_OPENGL ) {
+ 				WIN_GL_ShutDown(this);
+ 			}
++#endif
+ 			this->screen->pixels = NULL;
+ 		}
+ 		if ( screen_pal != NULL ) {
