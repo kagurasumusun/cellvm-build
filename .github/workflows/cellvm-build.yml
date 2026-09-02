@@ -394,6 +394,7 @@ jobs:
           export WORK="$RUNNER_TEMP/easyrpg-wince"
           export JOBS="$(nproc)"
           export SYSROOT_INC="$PWD/install/wince-llvm/wince-sysroot/include"
+          export PLAYER_PDB=1
           sh build-easyrpg-player.sh
 
       - name: Job summary
@@ -472,3 +473,36 @@ jobs:
             build-wince-runtimes/**/*.log
           if-no-files-found: ignore
           retention-days: 14
+
+  release:
+    name: Publish the exe artifacts on a rolling release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: '*${{ env.TARGET }}*'
+      - name: Publish (rolling tag wince-latest)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          tag=wince-latest
+          # Flatten the downloaded artifact trees and drop meta files.
+          mkdir -p pub
+          find dist -type f \( -name '*.exe' -o -name '*.pdb' \
+              -o -name 'wince-llvm-*.tar.zst' -o -name 'wince-llvm-*.tar.zst.sha256' \
+              -o -name 'SHA256SUMS' \) -exec cp -v {} pub/ \;
+          ls -l pub
+          notes=$(printf 'Rolling artifacts from cellvm-build main @ %s\n\n- easyrpg-player.exe / easyrpg-player.pdb\n- glpi-wince-agent\n- wince-llvm toolchain tarball\n\nBuilt by GitHub Actions; see the workflow run for logs.' "${GITHUB_SHA::8}")
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" --target "$GITHUB_SHA" \
+            --title "WinCE toolchain artifacts (${GITHUB_SHA::8})" \
+            --notes "$notes"
+          gh release upload "$tag" pub/* --clobber
+          gh release view "$tag"

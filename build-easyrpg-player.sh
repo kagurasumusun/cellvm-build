@@ -269,6 +269,15 @@ if [ -n "$SYSROOT_INC" ] && command -v python3 >/dev/null; then
   fi
 fi
 
+# PDB emission is opt-in (PLAYER_PDB=1): compile the Player objects with
+# CodeView and link with /debug so lld-link writes a standalone
+# easyrpg-player.pdb next to the image (host debugger material; the CE
+# loader ignores the debug directory).
+if [ "${PLAYER_PDB:-0}" = 1 ]; then
+  export CXXFLAGS="$CXXFLAGS -gcodeview"
+  export LDFLAGS="$LDFLAGS -Wl,/debug"
+fi
+
 make -C Player-0.6.2.3-wince -j"$JOBS" \
   CROSS="$CROSS" PREFIX="$PREFIX"
 
@@ -278,6 +287,12 @@ test -s "$EXE"
 DEST=${DEST:-$PREFIX/../player-wince}
 mkdir -p "$DEST"
 cp -a "$EXE" "$DEST/"
+
+PDB=Player-0.6.2.3-wince/easyrpg-player.pdb
+if [ -f "$PDB" ]; then
+  cp -a "$PDB" "$DEST/"
+  sha256sum "$DEST/easyrpg-player.pdb" >> "$DEST/SHA256SUMS" || true
+fi
 
 if command -v llvm-readobj >/dev/null; then
   llvm-readobj --file-headers "$EXE" \
