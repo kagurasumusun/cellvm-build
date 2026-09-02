@@ -74,7 +74,7 @@ case "$TARGET" in
   # llvm-dlltool's machine names: "arm" (the GNU "armce"/"arm-wince-pe"
   # spellings are binutils-only; llvm-dlltool rejects them with
   # "unknown target").
-  arm-pc-wince*|arm-mingw32ce*) HOST_ALIAS="arm-mingw32ce"; DLLTOOL_MACHINE="arm" ;;
+  arm-pc-wince*|arm-mingw32ce*) HOST_ALIAS="arm-mingw32ce"; DLLTOOL_MACHINE="armce" ;;
   i386-pc-wince*|i386-mingw32ce) HOST_ALIAS="i386-mingw32ce"; DLLTOOL_MACHINE="i386" ;;
   *) echo "$PROGRAM: unsupported WinCE target '$TARGET'" >&2; exit 1 ;;
 esac
