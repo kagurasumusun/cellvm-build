@@ -214,7 +214,77 @@ jobs:
             echo "  --- first 22 MIR lines ---"
             sed -n '1,22p' "$TMP/$T.mir"
           done
+          echo "===== D. which ARM feature level loses the landing pad? ====="
+          echo "# armv5te and thumbv5te keep cpp_func's landing pad; armv7 and thumbv7"
+          echo "# lose it entirely, so the discriminator is the architecture version and"
+          echo "# not Thumb.  Sweep versions to bracket the threshold.  The input IR is"
+          echo "# triple-independent, so every row gets the same landing pad in."
+          echo "  input IR: landingpad=$(grep -c 'landingpad' "$LL") personality=$(grep -c 'personality' "$LL") invoke=$(grep -c 'invoke' "$LL")"
+          for T in armv4 armv4t armv5 armv5te armv6 armv6k armv6m armv6t2 armv7 armv7a armv7r armv7m armv8a thumbv4t thumbv6 thumbv7 thumbv8a; do
+            "$BIN/llc" -mtriple="$T-pc-wince" -o - "$LL" > "$TMP/sweep.txt" 2>/dev/null
+            printf '  %-10s .personality=%-2s GCC_except_table=%-2s .handlerdata=%-2s Ltmp=%-3s cantunwind=%s\n' \
+              "$T" "$(grep -c '^\.personality' "$TMP/sweep.txt")" "$(grep -c 'GCC_except_table' "$TMP/sweep.txt")" \
+              "$(grep -c '^\.handlerdata' "$TMP/sweep.txt")" "$(grep -c 'Ltmp' "$TMP/sweep.txt")" \
+              "$(grep -c 'cantunwind' "$TMP/sweep.txt")"
+          done
+
+          echo "===== E. is it the architecture version or the CPU derived from it? ====="
+          echo "# With no -mcpu, Triple::getARMCPUForArch picks one per architecture"
+          echo "# version, so the sweep above changes both at once.  Cross them."
+          printf '  %-22s %-12s .personality=%s\n' 'armv5te-pc-wince' 'cortex-a8' \
+            "$("$BIN/llc" -mtriple=armv5te-pc-wince -mcpu=cortex-a8 -o - "$LL" 2>/dev/null | grep -c '^\.personality')"
+          printf '  %-22s %-12s .personality=%s\n' 'armv7-pc-wince' 'arm10tdmi' \
+            "$("$BIN/llc" -mtriple=armv7-pc-wince -mcpu=arm10tdmi -o - "$LL" 2>/dev/null | grep -c '^\.personality')"
+          printf '  %-22s %-12s .personality=%s\n' 'armv7-pc-wince' 'arm1136j-s' \
+            "$("$BIN/llc" -mtriple=armv7-pc-wince -mcpu=arm1136j-s -o - "$LL" 2>/dev/null | grep -c '^\.personality')"
+          printf '  %-22s %-12s .personality=%s\n' 'armv7-pc-wince' 'generic' \
+            "$("$BIN/llc" -mtriple=armv7-pc-wince -mcpu=generic -o - "$LL" 2>/dev/null | grep -c '^\.personality')"
+          printf '  %-22s %-12s .personality=%s\n' 'armv5te-pc-wince' 'generic' \
+            "$("$BIN/llc" -mtriple=armv5te-pc-wince -mcpu=generic -o - "$LL" 2>/dev/null | grep -c '^\.personality')"
+
+          echo "===== F. does the optimization level matter for armv7? ====="
+          for O in 0 1 2 3; do
+            "$BIN/llc" -mtriple=armv7-pc-wince -O"$O" -o - "$LL" > "$TMP/o$O.txt" 2>/dev/null
+            printf '  -O%s .personality=%-2s GCC_except_table=%-2s Ltmp=%-3s\n' "$O" \
+              "$(grep -c '^\.personality' "$TMP/o$O.txt")" "$(grep -c 'GCC_except_table' "$TMP/o$O.txt")" \
+              "$(grep -c 'Ltmp' "$TMP/o$O.txt")"
+          done
+
+          echo "===== G. is seh_func, a WinEH function in the same module, what flips armv7? ====="
+          echo "# cpp_func is trivial - one invoke, a cleanup landing pad and a resume -"
+          echo "# and nothing in it is arch-dependent.  seh_func next to it uses catchswitch"
+          echo "# and catchpad, i.e. Windows EH.  Compile cpp_func alone to separate them."
+          printf '%s\n' \
+            'declare i32 @__gxx_personality_v0(...)' \
+            'declare void @may_crash()' \
+            'define i32 @cpp_func(i32 %x) personality ptr @__gxx_personality_v0 {' \
+            'entry:' \
+            '  invoke void @may_crash() to label %cont unwind label %lpad' \
+            'cont:' \
+            '  ret i32 %x' \
+            'lpad:' \
+            '  %lp = landingpad { ptr, i32 }' \
+            '          cleanup' \
+            '  resume { ptr, i32 } %lp' \
+            '}' > "$TMP/only-cpp.ll"
+          for T in armv5te thumbv5te armv7 thumbv7; do
+            "$BIN/llc" -mtriple="$T-pc-wince" -o - "$TMP/only-cpp.ll" > "$TMP/only-$T.s" 2> "$TMP/only-$T.err"
+            printf '  %-10s .personality=%-2s GCC_except_table=%-2s cantunwind=%-2s Ltmp=%-3s err=%s\n' \
+              "$T" "$(grep -c '^\.personality' "$TMP/only-$T.s")" "$(grep -c 'GCC_except_table' "$TMP/only-$T.s")" \
+              "$(grep -c 'cantunwind' "$TMP/only-$T.s")" "$(grep -c 'Ltmp' "$TMP/only-$T.s")" \
+              "$(head -c 110 "$TMP/only-$T.err" | tr '\n' ' ')"
+          done
+
+          echo "===== H. cpp_func MIR after finalize-isel: armv5te (works) vs armv7 (loses it) ====="
+          echo "# 82 vs 64 lines and 3 vs 0 EH_LABELs, so the landing pad is already gone"
+          echo "# before the AsmPrinter runs.  These bodies show what ISel kept."
+          for T in armv5te armv7; do
+            echo "----- $T-pc-wince -----"
+            "$BIN/llc" -mtriple="$T-pc-wince" -stop-after=finalize-isel -o - "$LL" 2>/dev/null \
+              | awk '/^name:[ ]*cpp_func/{f=1} f&&/^\.\.\.$/{exit} f' | tail -n +23
+          done
           echo "===== diagnostics done ====="
+
 
       - name: "Stage 1: WinCE lit tests"
         run: |
@@ -475,6 +545,85 @@ jobs:
             echo "  FAIL  C++  sal.h + fwapi.h + xmllite.h"; FAILED="$FAILED CXX:sal-combo"
           fi
 
+
+          # ---------------------------------------------------------------------
+          # EGL / OpenGL ES 2.0, newly imported from the CE 6.0 R1 SDK.
+          #
+          # ce600 ships EGL/egl.h, EGL/eglplatform.h, EGL/eglext.h, GLES/gl.h,
+          # GLES/glplatform.h, GLES2/gl2.h, GLES2/gl2platform.h and GLES2/gl2ext.h
+          # under SDK/INC, plus libegl.def and libglesv2.def under
+          # PUBLIC/COMMON/OAK/LIB/ARMV4I/RETAIL.  The EGL and GLES2 halves are
+          # imported together with their matching import libraries: egl.h declares
+          # exactly the 34 exports libegl.def lists, and gl2.h exactly the 142 that
+          # libglesv2.def lists.  The GLES 1.1 half (GLES/gl.h, GLES/glplatform.h)
+          # is deliberately NOT imported: CE 6.0's OAK/LIB tree has no glesv1 def or
+          # lib at all, so importing those two headers would ship a header with
+          # nothing to link against - the very gap this step exists to close.  There
+          # is no KHR/khrplatform.h anywhere in ce600 either; CE's headers define
+          # their own platform types instead of the Khronos ones.
+          #
+          # eglplatform.h is the single place the import deviates from the CE text,
+          # and the three checks below are its regression guard.  CE writes
+          # `typedef __int32 int32_t;', which is correct under MSVC (__int32 is a
+          # keyword there, meaning exactly int) but not under this toolchain:
+          # neither mingwrt nor w32api has that keyword, so both map the spelling to
+          # `long' (mingwrt include/_mingw.h:97, w32api include/basetyps.h:17), and
+          # `long' is a different type from mingwrt include/stdint.h:31's
+          # `typedef int int32_t;'.  A translation unit that included both
+          # <stdint.h> and <EGL/egl.h> would then fail under any C or C++ standard,
+          # because redefining a typedef to a different type is invalid even in C11.
+          # The import takes int32_t from <stdint.h> instead.
+          printf '#include <stdint.h>\n#include <EGL/egl.h>\nint main(void) { return 0; }\n' > smoke-hdr-egl-c.c
+          if "$CLANG" --target="$TARGET" -fsyntax-only smoke-hdr-egl-c.c; then
+            echo "  ok    C    stdint.h + EGL/egl.h"
+          else
+            echo "  FAIL  C    stdint.h + EGL/egl.h"; FAILED="$FAILED C:egl-stdint"
+          fi
+
+          # In C++ the two must not merely coexist, they must be the same type.
+          printf '#include <stdint.h>\n#include <type_traits>\n#include <EGL/egl.h>\n' > smoke-hdr-egl-cxx.cpp
+          printf 'static_assert(std::is_same<EGLint, int32_t>::value, "EGLint must be int32_t");\n' >> smoke-hdr-egl-cxx.cpp
+          printf 'int main() { return 0; }\n' >> smoke-hdr-egl-cxx.cpp
+          if "$CLANG" --target="$TARGET" -x c++ -fsyntax-only smoke-hdr-egl-cxx.cpp; then
+            echo "  ok    C++  EGLint is int32_t (same type, not just same size)"
+          else
+            echo "  FAIL  C++  EGLint is int32_t"; FAILED="$FAILED CXX:eglint-type"
+          fi
+
+          # eglext.h includes only EGL/eglplatform.h, so it is self-contained;
+          # gl2ext.h does NOT include gl2.h, so CE's own order is gl2.h first.
+          # gl2platform.h supplies GL_APICALL/GL_APIENTRY, and eglplatform.h pulls
+          # <windows.h> under _WIN32 - which clang does define for wince - for the
+          # HDC/HWND/HBITMAP aliases of the EGLNative* types.
+          printf '#include <EGL/eglext.h>\n#include <GLES2/gl2.h>\n#include <GLES2/gl2ext.h>\nint main(void) { return 0; }\n' > smoke-hdr-gles.c
+          if "$CLANG" --target="$TARGET" -fsyntax-only smoke-hdr-gles.c; then
+            echo "  ok    C    EGL/eglext.h + GLES2/gl2.h + GLES2/gl2ext.h"
+          else
+            echo "  FAIL  C    EGL/eglext.h + GLES2/gl2.h + GLES2/gl2ext.h"; FAILED="$FAILED C:eglext-gles"
+          fi
+          if "$CLANG" --target="$TARGET" -x c++ -fsyntax-only smoke-hdr-gles.c; then
+            echo "  ok    C++  EGL/eglext.h + GLES2/gl2.h + GLES2/gl2ext.h"
+          else
+            echo "  FAIL  C++  EGL/eglext.h + GLES2/gl2.h + GLES2/gl2ext.h"; FAILED="$FAILED CXX:eglext-gles"
+          fi
+
+          # And a real use of both libraries' entry points, so their declarations are
+          # instantiated rather than merely parsed.  eglGetProcAddress is declared in
+          # CE's unusual form
+          #   EGLAPI void (* EGLAPIENTRY eglGetProcAddress(const char *procname))(void);
+          # - a function returning a function pointer - which is why a signature
+          # regex over egl.h finds 33 of the 34 exports and not this one.
+          printf '#include <EGL/egl.h>\n#include <GLES2/gl2.h>\n' > smoke-use-gl.c
+          printf 'static EGLBoolean (*const pSwap)(EGLDisplay, EGLSurface) = eglSwapBuffers;\n' >> smoke-use-gl.c
+          printf 'static void (*const pVP)(GLenum, GLint, GLint, GLsizei, GLsizei) = glViewport;\n' >> smoke-use-gl.c
+          printf 'static void (*(*const pGPA)(const char *))(void) = eglGetProcAddress;\n' >> smoke-use-gl.c
+          printf 'static GLuint (*const pCS)(GLenum) = glCreateShader;\n' >> smoke-use-gl.c
+          printf 'int main(void) { return pSwap && pVP && pGPA && pCS; }\n' >> smoke-use-gl.c
+          if "$CLANG" --target="$TARGET" -fsyntax-only smoke-use-gl.c; then
+            echo "  ok    C    eglSwapBuffers + glViewport + eglGetProcAddress + glCreateShader"
+          else
+            echo "  FAIL  C    eglSwapBuffers + glViewport + eglGetProcAddress + glCreateShader"; FAILED="$FAILED C:gl-use"
+          fi
           if [ -n "$FAILED" ]; then
             echo "===== CE6 header smoke FAILED:$FAILED ====="
             exit 1
