@@ -275,16 +275,23 @@ jobs:
           BIN="$PWD/install/wince-llvm/bin"
 
           printf 'int add(int a, int b){return a+b;}\nint main(void){return add(1,2)-3;}\n' > smoke-cv.c
-          # CodeView is what lld embeds; -g alone is DWARF on this target, so
-          # ask for -gcodeview explicitly (the driver then passes -debug to
-          # lld-link because the -g_Group match is not -g0).
+          # CodeView is what lld embeds; -g alone is DWARF CFI (.debug_frame) on
+          # this target, so ask for -gcodeview explicitly (the driver then passes
+          # -debug to lld-link because the -g_Group match is not -g0).
+          "$CLANG" --target="$TARGET" -g -gcodeview -c smoke-cv.c -o smoke-cv.obj
+          "$BIN/llvm-objdump" -h smoke-cv.obj | tee smoke-cv.obj.sections
           "$CLANG" --target="$TARGET" -g -gcodeview -o smoke-cv.exe smoke-cv.c
           "$BIN/llvm-objdump" -h smoke-cv.exe | tee smoke-cv.sections
           # COFF stores names longer than 8 chars in the section-header string
           # table, so objdump prints the `/N` reference, not `.debug$S`: match
           # the raw image instead of the objdump listing.
-          strings smoke-cv.exe | grep -qF ".debug$S"
-          strings smoke-cv.exe | grep -qF ".debug$T"
+          # NOTE single quotes: "$S" would be expanded by the shell to an empty
+          # variable, silently relaxing the pattern to '.debug' - which matched
+          # the DWARF .debug_frame section and turned this check into a false
+          # green until the dual-unwind-table change stopped emitting
+          # .debug_frame for CE functions.
+          strings smoke-cv.exe | grep -qF '.debug$S'
+          strings smoke-cv.exe | grep -qF '.debug$T'
           echo "CodeView sections embedded in the linked image (-gcodeview -> lld-link -debug)"
 
       # -----------------------------------------------------------------
