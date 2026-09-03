@@ -135,46 +135,80 @@ jobs:
         run: |
           set +e
 
-          ./build/bin/llvm-lit -sv --timeout 900 \
-            llvm-project/clang/test/Driver/wince.c \
-            llvm-project/clang/test/Driver/wince-unsupported-arch.c \
-            llvm-project/clang/test/Preprocessor/wince-version-macros.c \
-            llvm-project/clang/test/CodeGen/wince-seh.c \
-            llvm-project/clang/test/CodeGen/wince-x86-seh.c \
-            llvm-project/clang/test/CodeGen/ARM/wince-ehabi-tables.c \
-            llvm-project/clang/test/CodeGen/ARM/wince-global-ctors.c \
-            llvm-project/clang/test/CodeGen/ARM/wince-literal-pool.c \
-            llvm-project/clang/test/CodeGen/ARM/wince-seh-ehabi-mixed.c \
-            llvm-project/clang/test/CodeGen/ARM/wince-seh-scope-table.c \
-            llvm-project/clang/test/CodeGen/ARM/wince-codeview.c \
-            llvm-project/clang/test/CodeGen/ARM/wince-cpp-abi.cpp \
-            llvm-project/clang/test/CodeGen/ARM/wince-cpp-ttype-encoding.cpp \
-            llvm-project/clang/test/CodeGen/ARM/wince-pdata-every-function.ll \
-            llvm-project/clang/test/Parser/ms-pragmas-full.c \
-            llvm-project/clang/test/Parser/ms-extern.c \
-            llvm-project/clang/test/Sema/ms-extern.c \
-            llvm-project/lld/test/COFF/wince-arm-relocs.s \
-            llvm-project/lld/test/COFF/wince-ctors.s \
-            llvm-project/lld/test/COFF/wince-exidx-bounds.s \
-            llvm-project/lld/test/COFF/wince-exidx-sort.s \
-            llvm-project/lld/test/COFF/wince-image.s \
-            llvm-project/lld/test/COFF/wince-pdata.test \
-            llvm-project/lld/test/COFF/wince-pdb.test \
-            llvm-project/lld/test/COFF/wince-range-thunk.s \
-            llvm-project/lld/test/COFF/wince-range-thunk-thumb.s \
-            llvm-project/lld/test/COFF/wince-thumb-bit.s \
-            llvm-project/lld/test/COFF/wince-thunk.s \
-            llvm-project/llvm/test/MC/ARM/wince-coff-relocs.s \
-            llvm-project/llvm/test/MC/ARM/wince-exidx.s \
-            llvm-project/llvm/test/MC/ARM/wince-seh-pdata.s \
-            llvm-project/llvm/test/MC/ARM/wince-armasm.s \
-            llvm-project/llvm/test/MC/ARM/wince-armasm-labels.s \
-            llvm-project/llvm/test/MC/ARM/wince-armasm-data.s \
-            llvm-project/llvm/test/MC/ARM/wince-armasm-cond.s \
-            llvm-project/llvm/test/CodeGen/ARM/wince-seh-parent-frame.ll \
+          # Every path below is asserted to exist before lit runs, and the number of
+          # tests lit discovers is asserted to equal the number of files listed.  Both
+          # checks are needed because lit treats a bad path as a warning, not an error:
+          # it prints "input ... contained no tests" and still exits 0, so the gate
+          # silently loses coverage.  CI 33765390258 did exactly that -
+          # wince-pdata-every-function.ll was listed under clang/test/CodeGen/ARM/ when
+          # it lives in llvm/test/CodeGen/ARM/, so 37 listed inputs produced "Passed: 36"
+          # and the step went green.  The path is corrected here, and the four tests
+          # that existed but were never listed are added: clang/test/Driver/wince-x86.c,
+          # clang/test/CodeGen/ARM/wince-cxx-eh-pdata.cpp, and the two lld COMDAT cases
+          # wince-exidx-comdat.s / wince-pdata-comdat.s.  All 41 entries are now the
+          # complete set of WinCE tests in the tree (verified by walking the clang/test,
+          # lld/test and llvm/test git trees without truncation: 15 + 16 + 10 paths,
+          # minus lld/test/COFF/Inputs/*.s and the wince-range-thunk-thumb-check.py
+          # helper, plus the three ms-* extension tests that do not carry "wince" in
+          # their names).
+          WINCE_TESTS=(
+            llvm-project/clang/test/Driver/wince.c
+            llvm-project/clang/test/Driver/wince-unsupported-arch.c
+            llvm-project/clang/test/Driver/wince-x86.c
+            llvm-project/clang/test/Preprocessor/wince-version-macros.c
+            llvm-project/clang/test/CodeGen/wince-seh.c
+            llvm-project/clang/test/CodeGen/wince-x86-seh.c
+            llvm-project/clang/test/CodeGen/ARM/wince-ehabi-tables.c
+            llvm-project/clang/test/CodeGen/ARM/wince-global-ctors.c
+            llvm-project/clang/test/CodeGen/ARM/wince-literal-pool.c
+            llvm-project/clang/test/CodeGen/ARM/wince-seh-ehabi-mixed.c
+            llvm-project/clang/test/CodeGen/ARM/wince-seh-scope-table.c
+            llvm-project/clang/test/CodeGen/ARM/wince-codeview.c
+            llvm-project/clang/test/CodeGen/ARM/wince-cpp-abi.cpp
+            llvm-project/clang/test/CodeGen/ARM/wince-cpp-ttype-encoding.cpp
+            llvm-project/clang/test/CodeGen/ARM/wince-cxx-eh-pdata.cpp
+            llvm-project/clang/test/Parser/ms-pragmas-full.c
+            llvm-project/clang/test/Parser/ms-extern.c
+            llvm-project/clang/test/Sema/ms-extern.c
+            llvm-project/lld/test/COFF/wince-arm-relocs.s
+            llvm-project/lld/test/COFF/wince-ctors.s
+            llvm-project/lld/test/COFF/wince-exidx-bounds.s
+            llvm-project/lld/test/COFF/wince-exidx-comdat.s
+            llvm-project/lld/test/COFF/wince-exidx-sort.s
+            llvm-project/lld/test/COFF/wince-image.s
+            llvm-project/lld/test/COFF/wince-pdata-comdat.s
+            llvm-project/lld/test/COFF/wince-pdata.test
+            llvm-project/lld/test/COFF/wince-pdb.test
+            llvm-project/lld/test/COFF/wince-range-thunk.s
+            llvm-project/lld/test/COFF/wince-range-thunk-thumb.s
+            llvm-project/lld/test/COFF/wince-thumb-bit.s
+            llvm-project/lld/test/COFF/wince-thunk.s
+            llvm-project/llvm/test/MC/ARM/wince-coff-relocs.s
+            llvm-project/llvm/test/MC/ARM/wince-exidx.s
+            llvm-project/llvm/test/MC/ARM/wince-seh-pdata.s
+            llvm-project/llvm/test/MC/ARM/wince-armasm.s
+            llvm-project/llvm/test/MC/ARM/wince-armasm-labels.s
+            llvm-project/llvm/test/MC/ARM/wince-armasm-data.s
+            llvm-project/llvm/test/MC/ARM/wince-armasm-cond.s
+            llvm-project/llvm/test/CodeGen/ARM/wince-pdata-every-function.ll
+            llvm-project/llvm/test/CodeGen/ARM/wince-seh-parent-frame.ll
             llvm-project/llvm/test/CodeGen/ARM/wince-soft-float.ll
+          )
 
+          MISSING=""
+          for t in "${WINCE_TESTS[@]}"; do
+            [ -f "$t" ] || MISSING="$MISSING $t"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "===== WinCE lit gate: listed test files do not exist:$MISSING ====="
+            exit 1
+          fi
+
+          OUT=$(
+            ./build/bin/llvm-lit -sv --timeout 900 "${WINCE_TESTS[@]}" 2>&1
+          )
           RC=$?
+          echo "$OUT"
           set -e
 
           if [ $RC -ne 0 ]; then
@@ -182,10 +216,12 @@ jobs:
             exit $RC
           fi
 
-      # -----------------------------------------------------------------
-      # Install
-      # -----------------------------------------------------------------
-
+          NPASS=$(echo "$OUT" | sed -n 's/.*Passed: \([0-9]\+\).*/\1/p' | tail -1)
+          if [ "${NPASS:-0}" -ne "${#WINCE_TESTS[@]}" ]; then
+            echo "===== WinCE lit gate: ${#WINCE_TESTS[@]} files listed but ${NPASS:-0} passed ====="
+            echo "      (a test that was skipped or contained no RUN lines is a gap, not a pass)"
+            exit 1
+          fi
       - name: "Install (isolated prefix)"
         run: |
           cmake --build build --target \
