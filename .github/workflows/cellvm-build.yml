@@ -107,6 +107,7 @@ jobs:
           cmake --build build --target clang lld llc \
             llvm-ar llvm-ranlib llvm-dlltool llvm-nm llvm-mc llvm-readobj \
             llvm-objdump llvm-objcopy llvm-rc llvm-config llvm-pdbutil \
+            llvm-symbolizer \
             FileCheck split-file not count
 
           BIN=build/bin
@@ -131,69 +132,70 @@ jobs:
           path: ${{ github.workspace }}/build
           key: ninja-${{ runner.os }}-${{ hashFiles('llvm-project/clang/cmake/caches/WinCE.cmake') }}-${{ github.sha }}
 
-      - name: "Stage 1 diagnostics: x86 -c crash + thumbv7 personality"
-        # Diagnostic only: reports exit statuses, never propagates them, and
-        # cannot mask or block the lit gate below.
+      - name: "Stage 1 diagnostics: symbolized x86 crash + thumbv7 personality"
+        # Diagnostic only: reports exit statuses and dumps backtraces, never
+        # propagates a failure, and cannot mask or block the lit gate below.
         continue-on-error: true
         run: |
           set +e
           BIN="$PWD/build/bin"
+          export LLVM_SYMBOLIZER_PATH="$BIN/llvm-symbolizer"
           LL="$PWD/llvm-project/llvm/test/CodeGen/ARM/wince-pdata-every-function.ll"
           TMP="$(mktemp -d)"
+          : > "$TMP/empty.ll"
+          printf 'define i32 @f() {\nentry:\n  ret i32 0\n}\n' > "$TMP/f.ll"
           printf 'int f(void) { return 0; }\n' > "$TMP/plain.c"
-          printf 'int __stdcall g(void) { return 0; }\n' > "$TMP/stdcall.c"
-          : > "$TMP/empty.c"
-
-          # Report one invocation's exit status instead of propagating it.  A clang
-          # frontend crash surfaces through the driver as exit 139 (SIGSEGV).
-          probe() {
-            desc="$1"; shift
-            out="$("$@" 2>&1)"; rc=$?
-            note=""
-            if [ $rc -ne 0 ]; then
-              note="$(printf '%s\n' "$out" | grep -m1 -E 'PLEASE submit|Stack dump|UNREACHABLE|Assertion|error:' | cut -c1-92)"
-            fi
-            printf '  rc=%-4s %-56s %s\n' "$rc" "$desc" "$note"
-          }
-
           W="-Wno-wince-sysroot-missing"
-          echo "===== A1. i386-pc-wince: walk the pipeline stage by stage ====="
-          probe "-fsyntax-only            plain.c" "$BIN/clang" -target i386-pc-wince $W -fsyntax-only "$TMP/plain.c"
-          probe "-emit-llvm -S           plain.c" "$BIN/clang" -target i386-pc-wince $W -emit-llvm -S "$TMP/plain.c" -o "$TMP/a.ll"
-          probe "-emit-llvm -c           plain.c" "$BIN/clang" -target i386-pc-wince $W -emit-llvm -c "$TMP/plain.c" -o "$TMP/a.bc"
-          probe "-S                      plain.c" "$BIN/clang" -target i386-pc-wince $W -S "$TMP/plain.c" -o "$TMP/a.s"
-          probe "-c                      plain.c" "$BIN/clang" -target i386-pc-wince $W -c "$TMP/plain.c" -o "$TMP/a.o"
-          probe "-c                      stdcall.c" "$BIN/clang" -target i386-pc-wince $W -c "$TMP/stdcall.c" -o "$TMP/b.o"
-          probe "-fsyntax-only           empty.c" "$BIN/clang" -target i386-pc-wince $W -fsyntax-only "$TMP/empty.c"
-          probe "-c                      empty.c" "$BIN/clang" -target i386-pc-wince $W -c "$TMP/empty.c" -o "$TMP/c.o"
 
-          echo "===== A2. i386-pc-wince: isolate the layer (AsmPrinter vs COFF object writer) ====="
-          probe "-S  -disable-llvm-passes plain.c" "$BIN/clang" -target i386-pc-wince $W -S -Xclang -disable-llvm-passes "$TMP/plain.c" -o "$TMP/d.s"
-          probe "-c  -disable-llvm-passes plain.c" "$BIN/clang" -target i386-pc-wince $W -c -Xclang -disable-llvm-passes "$TMP/plain.c" -o "$TMP/d.o"
-          probe "llc -filetype=asm  (from IR)" "$BIN/llc" -mtriple=i386-pc-wince -filetype=asm "$TMP/a.ll" -o "$TMP/e.s"
-          probe "llc -filetype=obj  (from IR)" "$BIN/llc" -mtriple=i386-pc-wince -filetype=obj "$TMP/a.ll" -o "$TMP/e.o"
+          echo "===== A0. llvm-symbolizer present? ====="
+          if [ -x "$BIN/llvm-symbolizer" ]; then
+            echo "  yes: $BIN/llvm-symbolizer"
+          else
+            echo "  NO - backtraces will stay unsymbolized"
+          fi
 
-          echo "===== A3. i386-pc-wince: flag crosses ====="
-          probe "-c -O1                          " "$BIN/clang" -target i386-pc-wince $W -O1 -c "$TMP/plain.c" -o "$TMP/f.o"
-          probe "-c -O0 -g0                      " "$BIN/clang" -target i386-pc-wince $W -O0 -g0 -c "$TMP/plain.c" -o "$TMP/g.o"
-          probe "-c -g                           " "$BIN/clang" -target i386-pc-wince $W -g -c "$TMP/plain.c" -o "$TMP/h.o"
-          probe "-c -fno-unwind-tables -fno-async " "$BIN/clang" -target i386-pc-wince $W -fno-unwind-tables -fno-asynchronous-unwind-tables -c "$TMP/plain.c" -o "$TMP/i.o"
-          probe "-c -fms-extensions              " "$BIN/clang" -target i386-pc-wince $W -fms-extensions -c "$TMP/plain.c" -o "$TMP/j.o"
-          probe "-c -fno-ms-extensions           " "$BIN/clang" -target i386-pc-wince $W -fno-ms-extensions -c "$TMP/plain.c" -o "$TMP/k.o"
+          echo "===== A1. symbolized backtrace: llc -mtriple=i386-pc-wince ====="
+          echo "----- one-function module, -filetype=asm -----"
+          "$BIN/llc" -mtriple=i386-pc-wince -filetype=asm "$TMP/f.ll" -o "$TMP/f.s" 2>&1 | sed -n '1,70p'
+          echo "----- EMPTY module, -filetype=asm -----"
+          "$BIN/llc" -mtriple=i386-pc-wince -filetype=asm "$TMP/empty.ll" -o "$TMP/e.s" 2>&1 | sed -n '1,70p'
+          echo "----- one-function module, -filetype=obj -----"
+          "$BIN/llc" -mtriple=i386-pc-wince -filetype=obj "$TMP/f.ll" -o "$TMP/f.o" 2>&1 | sed -n '1,70p'
+          echo "----- one-function module, -filetype=null -----"
+          "$BIN/llc" -mtriple=i386-pc-wince -filetype=null "$TMP/f.ll" -o /dev/null 2>&1 | sed -n '1,70p'
+          echo "  rc=$?"
 
-          echo "===== A4. controls: same source, other targets ====="
-          probe "-c  i386-pc-win32               " "$BIN/clang" -target i386-pc-win32 -c "$TMP/plain.c" -o "$TMP/l.o"
-          probe "-c  i386-unknown-linux-gnu      " "$BIN/clang" -target i386-unknown-linux-gnu -c "$TMP/plain.c" -o "$TMP/m.o"
-          probe "-c  arm-pc-wince                " "$BIN/clang" -target arm-pc-wince $W -c "$TMP/plain.c" -o "$TMP/n.o"
-          probe "-c  thumbv7-pc-wince            " "$BIN/clang" -target thumbv7-pc-wince $W -c "$TMP/plain.c" -o "$TMP/o.o"
+          echo "===== A2. bracket the crash: -stop-after each late pass ====="
+          for P in finalize-isel pre-ra-machine-scheduler machine-cp prologepilog \
+                   pre-sched2 branch-folder x86-frame-lowering; do
+            out="$("$BIN/llc" -mtriple=i386-pc-wince -stop-after="$P" -o /dev/null "$TMP/f.ll" 2>&1)"
+            rc=$?
+            note=""
+            [ $rc -ne 0 ] && note="$(printf '%s\n' "$out" | grep -m1 -E 'PLEASE submit|error:|Unknown' | cut -c1-88)"
+            printf '  rc=%-4s -stop-after=%-26s %s\n' "$rc" "$P" "$note"
+          done
+          echo "----- and the same on the working control triple -----"
+          for P in finalize-isel prologepilog branch-folder; do
+            out="$("$BIN/llc" -mtriple=i386-pc-win32 -stop-after="$P" -o /dev/null "$TMP/f.ll" 2>&1)"
+            printf '  rc=%-4s i386-pc-win32 -stop-after=%s\n' "$?" "$P"
+          done
+          "$BIN/llc" -mtriple=i386-pc-win32 -filetype=asm "$TMP/f.ll" -o /dev/null 2>&1 | sed -n '1,6p'
+          echo "  rc=$? (control: full asm output on i386-pc-win32)"
 
-          echo "===== B. cpp_func frame per triple (the thumbv7 .personality divergence) ====="
+          echo "===== A3. clang -c with a symbolized backtrace ====="
+          "$BIN/clang" -target i386-pc-wince $W -c "$TMP/plain.c" -o "$TMP/plain.o" 2>&1 | sed -n '1,70p'
+          echo "  rc=$?"
+
+          echo "===== B. cpp_func frame per triple (thumbv7 loses .personality/.handlerdata) ====="
           for T in armv5te thumbv5te thumbv7; do
-            echo "----- $T-pc-wince -----"
+            echo "----- $T-pc-wince : directive sequence -----"
             "$BIN/llc" -mtriple="$T-pc-wince" -o - "$LL" 2>/dev/null \
               | sed -n '/^cpp_func:/,/^seh_func:/p' \
-              | grep -nE '\.seh_proc|\.fnstart|\.personality|\.handlerdata|\.fnend|\.seh_endproc|\.seh_handler|\.extab|\.seh_save|\.seh_endprologue' \
+              | grep -nE '\.seh_proc|\.fnstart|\.personality|\.handlerdata|\.fnend|\.seh_endproc|\.seh_handler|\.extab|\.seh_save|\.seh_endprologue|\.seh_stackalloc' \
               | head -24
+            echo "----- $T-pc-wince : raw cpp_func region (first 34 lines) -----"
+            "$BIN/llc" -mtriple="$T-pc-wince" -o - "$LL" 2>/dev/null \
+              | sed -n '/^cpp_func:/,/^seh_func:/p' | head -34
           done
           echo "===== diagnostics done ====="
 
