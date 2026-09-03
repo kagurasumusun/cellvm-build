@@ -281,19 +281,25 @@ jobs:
           # -debug to lld-link because the -g_Group match is not -g0).
           "$CLANG" --target="$TARGET" -g -gcodeview -c smoke-cv.c -o smoke-cv.obj
           "$BIN/llvm-objdump" -h smoke-cv.obj | tee smoke-cv.obj.sections
+          # The object must carry the CodeView subsections. Single quotes
+          # keep "$S" from being expanded to an empty shell variable, which
+          # silently relaxed the pattern to '.debug' (the false-green bug:
+          # it once matched the DWARF .debug_frame section in the object).
+          grep -qF '.debug$S' smoke-cv.obj.sections
+          grep -qF '.debug$T' smoke-cv.obj.sections
           "$CLANG" --target="$TARGET" -g -gcodeview -o smoke-cv.exe smoke-cv.c
           "$BIN/llvm-objdump" -h smoke-cv.exe | tee smoke-cv.sections
-          # COFF stores names longer than 8 chars in the section-header string
-          # table, so objdump prints the `/N` reference, not `.debug$S`: match
-          # the raw image instead of the objdump listing.
-          # NOTE single quotes: "$S" would be expanded by the shell to an empty
-          # variable, silently relaxing the pattern to '.debug' - which matched
-          # the DWARF .debug_frame section and turned this check into a false
-          # green until the dual-unwind-table change stopped emitting
-          # .debug_frame for CE functions.
-          strings smoke-cv.exe | grep -qF '.debug$S'
-          strings smoke-cv.exe | grep -qF '.debug$T'
-          echo "CodeView sections embedded in the linked image (-gcodeview -> lld-link -debug)"
+          # lld-link -debug consumes the .debug$* subsections and writes a
+          # standalone PDB next to the image (default name: <exe>.pdb); the
+          # sections themselves do not remain in the image (verified on the
+          # linked CE image: only .text/.rdata/.data/.ctors/.dtors/.ARM.exi/
+          # .ARM.ext). Verify the PDB instead: it must exist and hold the
+          # public symbols (format per lld/test/COFF/wince-pdb.test).
+          test -s smoke-cv.pdb
+          "$BIN/llvm-pdbutil" dump -publics smoke-cv.pdb | tee smoke-cv.pdb.publics
+          grep -qF 'main' smoke-cv.pdb.publics
+          grep -qF 'add' smoke-cv.pdb.publics
+          echo "CodeView verified: .debug\$S/.debug\$T in the object, standalone smoke-cv.pdb with public symbols"
 
       # -----------------------------------------------------------------
       # Package
