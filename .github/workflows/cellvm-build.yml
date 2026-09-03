@@ -269,7 +269,7 @@ jobs:
           # guiddef.h).  libwzcsapi.def stays: an import library is a link
           # surface and needs no header.
           FAILED=""
-          for h in cecompr.h diskio.h fatutil.h fwapi.h types.h; do
+          for h in cecompr.h diskio.h extfile.h fatutil.h fwapi.h mextfile.h types.h; do
             printf '#include <windows.h>\n#include <%s>\nint main(void) { return 0; }\n' "$h" \
               > "smoke-hdr-$h.c"
             if "$CLANG" --target="$TARGET" -fsyntax-only "smoke-hdr-$h.c"; then
@@ -303,6 +303,42 @@ jobs:
             echo "  ok    C    cecompr.h twice"
           else
             echo "  FAIL  C    cecompr.h twice"; FAILED="$FAILED C:cecompr-twice"
+          fi
+
+          # extfile.h reaches mextfile.h only under WINCEMACRO (line 212), which
+          # nothing in this toolchain defines, so the plain loop above never
+          # compiles mextfile.h as an include.  Define it here to exercise that
+          # path - mextfile.h is 157 lines of AFS_API_* ordinal constants and
+          # AFS_*_Trap wrapper macros, all _Trap-suffixed so they cannot collide
+          # with extfile.h's own declarations.
+          printf '#include <windows.h>\n#include <extfile.h>\nint main(void) { return AFS_API_Unmount + AFS_API_CreateFileW; }\n' \
+            > smoke-hdr-wincemacro.c
+          if "$CLANG" --target="$TARGET" -DWINCEMACRO -fsyntax-only smoke-hdr-wincemacro.c; then
+            echo "  ok    C    extfile.h + WINCEMACRO (mextfile.h)"
+          else
+            echo "  FAIL  C    extfile.h + WINCEMACRO (mextfile.h)"; FAILED="$FAILED C:wincemacro"
+          fi
+
+          # extfile.h's three newer AFS_* entry points are version-gated, and
+          # the gates have to hold in BOTH directions: present on CE 6.0 (where
+          # COREDLL really exports all 18 AFS_*), absent on CE 4.2 (whose
+          # coredll4.def exports only 15).  Referencing the names through
+          # sizeof is enough to force a declaration and is valid in C and C++
+          # without raising any calling-convention or pointer-conversion
+          # question.  -fsyntax-only never reaches Linker::ConstructJob, so the
+          # CE 4.2 invocation is not stopped by the separate CEVer<4 link
+          # diagnostic.
+          printf '#include <windows.h>\n#include <extfile.h>\nstatic const unsigned long afs_probe = sizeof(&AFS_FsIoControlW) + sizeof(&AFS_GetFileSecurityW) + sizeof(&AFS_SetFileSecurityW);\nint main(void) { return afs_probe == 3 * sizeof(void *) ? 0 : 1; }\n' \
+            > smoke-hdr-afs.c
+          if "$CLANG" --target="$TARGET" -fsyntax-only smoke-hdr-afs.c; then
+            echo "  ok    C    extfile.h AFS_* present on CE 6.0"
+          else
+            echo "  FAIL  C    extfile.h AFS_* present on CE 6.0"; FAILED="$FAILED C:afs-ce6"
+          fi
+          if "$CLANG" --target=arm-pc-wince4.2 -fsyntax-only smoke-hdr-afs.c 2>/dev/null; then
+            echo "  FAIL  C    extfile.h AFS_* leaked into CE 4.2"; FAILED="$FAILED C:afs-ce4-leak"
+          else
+            echo "  ok    C    extfile.h AFS_* absent on CE 4.2"
           fi
 
           # fwapi.h and xmllite.h now pull in w32api's specstrings.h for the
