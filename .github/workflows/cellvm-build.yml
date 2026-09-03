@@ -145,12 +145,15 @@ jobs:
             llvm-project/clang/test/CodeGen/ARM/wince-seh-scope-table.c \
             llvm-project/clang/test/CodeGen/ARM/wince-codeview.c \
             llvm-project/clang/test/CodeGen/ARM/wince-cpp-abi.cpp \
+            llvm-project/clang/test/CodeGen/ARM/wince-cpp-ttype-encoding.cpp \
+            llvm-project/clang/test/CodeGen/ARM/wince-pdata-every-function.ll \
             llvm-project/clang/test/Parser/ms-pragmas-full.c \
             llvm-project/clang/test/Parser/ms-extern.c \
             llvm-project/clang/test/Sema/ms-extern.c \
             llvm-project/lld/test/COFF/wince-arm-relocs.s \
             llvm-project/lld/test/COFF/wince-ctors.s \
             llvm-project/lld/test/COFF/wince-exidx-bounds.s \
+            llvm-project/lld/test/COFF/wince-exidx-sort.s \
             llvm-project/lld/test/COFF/wince-image.s \
             llvm-project/lld/test/COFF/wince-pdata.test \
             llvm-project/lld/test/COFF/wince-range-thunk.s \
