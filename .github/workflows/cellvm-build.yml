@@ -131,6 +131,72 @@ jobs:
           path: ${{ github.workspace }}/build
           key: ninja-${{ runner.os }}-${{ hashFiles('llvm-project/clang/cmake/caches/WinCE.cmake') }}-${{ github.sha }}
 
+      - name: "Stage 1 diagnostics: x86 -c crash + thumbv7 personality"
+        # Diagnostic only: reports exit statuses, never propagates them, and
+        # cannot mask or block the lit gate below.
+        continue-on-error: true
+        run: |
+          set +e
+          BIN="$PWD/build/bin"
+          LL="$PWD/llvm-project/llvm/test/CodeGen/ARM/wince-pdata-every-function.ll"
+          TMP="$(mktemp -d)"
+          printf 'int f(void) { return 0; }\n' > "$TMP/plain.c"
+          printf 'int __stdcall g(void) { return 0; }\n' > "$TMP/stdcall.c"
+          : > "$TMP/empty.c"
+
+          # Report one invocation's exit status instead of propagating it.  A clang
+          # frontend crash surfaces through the driver as exit 139 (SIGSEGV).
+          probe() {
+            desc="$1"; shift
+            out="$("$@" 2>&1)"; rc=$?
+            note=""
+            if [ $rc -ne 0 ]; then
+              note="$(printf '%s\n' "$out" | grep -m1 -E 'PLEASE submit|Stack dump|UNREACHABLE|Assertion|error:' | cut -c1-92)"
+            fi
+            printf '  rc=%-4s %-56s %s\n' "$rc" "$desc" "$note"
+          }
+
+          W="-Wno-wince-sysroot-missing"
+          echo "===== A1. i386-pc-wince: walk the pipeline stage by stage ====="
+          probe "-fsyntax-only            plain.c" "$BIN/clang" -target i386-pc-wince $W -fsyntax-only "$TMP/plain.c"
+          probe "-emit-llvm -S           plain.c" "$BIN/clang" -target i386-pc-wince $W -emit-llvm -S "$TMP/plain.c" -o "$TMP/a.ll"
+          probe "-emit-llvm -c           plain.c" "$BIN/clang" -target i386-pc-wince $W -emit-llvm -c "$TMP/plain.c" -o "$TMP/a.bc"
+          probe "-S                      plain.c" "$BIN/clang" -target i386-pc-wince $W -S "$TMP/plain.c" -o "$TMP/a.s"
+          probe "-c                      plain.c" "$BIN/clang" -target i386-pc-wince $W -c "$TMP/plain.c" -o "$TMP/a.o"
+          probe "-c                      stdcall.c" "$BIN/clang" -target i386-pc-wince $W -c "$TMP/stdcall.c" -o "$TMP/b.o"
+          probe "-fsyntax-only           empty.c" "$BIN/clang" -target i386-pc-wince $W -fsyntax-only "$TMP/empty.c"
+          probe "-c                      empty.c" "$BIN/clang" -target i386-pc-wince $W -c "$TMP/empty.c" -o "$TMP/c.o"
+
+          echo "===== A2. i386-pc-wince: isolate the layer (AsmPrinter vs COFF object writer) ====="
+          probe "-S  -disable-llvm-passes plain.c" "$BIN/clang" -target i386-pc-wince $W -S -Xclang -disable-llvm-passes "$TMP/plain.c" -o "$TMP/d.s"
+          probe "-c  -disable-llvm-passes plain.c" "$BIN/clang" -target i386-pc-wince $W -c -Xclang -disable-llvm-passes "$TMP/plain.c" -o "$TMP/d.o"
+          probe "llc -filetype=asm  (from IR)" "$BIN/llc" -mtriple=i386-pc-wince -filetype=asm "$TMP/a.ll" -o "$TMP/e.s"
+          probe "llc -filetype=obj  (from IR)" "$BIN/llc" -mtriple=i386-pc-wince -filetype=obj "$TMP/a.ll" -o "$TMP/e.o"
+
+          echo "===== A3. i386-pc-wince: flag crosses ====="
+          probe "-c -O1                          " "$BIN/clang" -target i386-pc-wince $W -O1 -c "$TMP/plain.c" -o "$TMP/f.o"
+          probe "-c -O0 -g0                      " "$BIN/clang" -target i386-pc-wince $W -O0 -g0 -c "$TMP/plain.c" -o "$TMP/g.o"
+          probe "-c -g                           " "$BIN/clang" -target i386-pc-wince $W -g -c "$TMP/plain.c" -o "$TMP/h.o"
+          probe "-c -fno-unwind-tables -fno-async " "$BIN/clang" -target i386-pc-wince $W -fno-unwind-tables -fno-asynchronous-unwind-tables -c "$TMP/plain.c" -o "$TMP/i.o"
+          probe "-c -fms-extensions              " "$BIN/clang" -target i386-pc-wince $W -fms-extensions -c "$TMP/plain.c" -o "$TMP/j.o"
+          probe "-c -fno-ms-extensions           " "$BIN/clang" -target i386-pc-wince $W -fno-ms-extensions -c "$TMP/plain.c" -o "$TMP/k.o"
+
+          echo "===== A4. controls: same source, other targets ====="
+          probe "-c  i386-pc-win32               " "$BIN/clang" -target i386-pc-win32 -c "$TMP/plain.c" -o "$TMP/l.o"
+          probe "-c  i386-unknown-linux-gnu      " "$BIN/clang" -target i386-unknown-linux-gnu -c "$TMP/plain.c" -o "$TMP/m.o"
+          probe "-c  arm-pc-wince                " "$BIN/clang" -target arm-pc-wince $W -c "$TMP/plain.c" -o "$TMP/n.o"
+          probe "-c  thumbv7-pc-wince            " "$BIN/clang" -target thumbv7-pc-wince $W -c "$TMP/plain.c" -o "$TMP/o.o"
+
+          echo "===== B. cpp_func frame per triple (the thumbv7 .personality divergence) ====="
+          for T in armv5te thumbv5te thumbv7; do
+            echo "----- $T-pc-wince -----"
+            "$BIN/llc" -mtriple="$T-pc-wince" -o - "$LL" 2>/dev/null \
+              | sed -n '/^cpp_func:/,/^seh_func:/p' \
+              | grep -nE '\.seh_proc|\.fnstart|\.personality|\.handlerdata|\.fnend|\.seh_endproc|\.seh_handler|\.extab|\.seh_save|\.seh_endprologue' \
+              | head -24
+          done
+          echo "===== diagnostics done ====="
+
       - name: "Stage 1: WinCE lit tests"
         run: |
           set +e
