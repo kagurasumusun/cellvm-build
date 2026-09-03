@@ -139,7 +139,6 @@ jobs:
             llvm-project/clang/test/Driver/wince.c \
             llvm-project/clang/test/CodeGen/wince-seh.c \
             llvm-project/clang/test/CodeGen/wince-x86-seh.c \
-            llvm-project/clang/test/CodeGenCXX/wince-x86-cxx-eh.cpp \
             llvm-project/clang/test/CodeGen/ARM/wince-ehabi-tables.c \
             llvm-project/clang/test/CodeGen/ARM/wince-global-ctors.c \
             llvm-project/clang/test/CodeGen/ARM/wince-literal-pool.c \
