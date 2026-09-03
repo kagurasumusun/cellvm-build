@@ -230,6 +230,46 @@ jobs:
           "$CLANG" --target="$TARGET" -c smoke.c -o smoke.o
           "$CLANG" --target="$TARGET" -### smoke.c -o smoke.exe 2>&1 | head -20
 
+      - name: "Stage 2: CE6 platform-header smoke (imported libce headers)"
+        run: |
+          CLANG="$PWD/install/wince-llvm/bin/clang"
+
+          # libce ships an import library for each of these DLLs, but a .def
+          # with no header is only half an API surface: the library links, yet
+          # nothing declares the entry points.  These headers came from the
+          # CE 6.0 R1 SDK (PUBLIC/COMMON/OAK/INC and PUBLIC/COMMON/SDK/INC) to
+          # close that gap.  Nothing in the mingwrt or w32api build includes
+          # them, so without this step they would land in the sysroot
+          # completely unverified.  Compile each against the real sysroot.
+          for h in cecompr.h diskio.h fatutil.h fwapi.h wzcsapi.h; do
+            printf '#include <windows.h>\n#include <%s>\nint main(void) { return 0; }\n' "$h" \
+              > "smoke-hdr-$h.c"
+            "$CLANG" --target="$TARGET" -fsyntax-only "smoke-hdr-$h.c"
+            "$CLANG" --target="$TARGET" -x c++ -fsyntax-only "smoke-hdr-$h.c"
+          done
+
+          # xmllite.h is a MIDL-generated COM stub: MIDL_INTERFACE() expands to
+          # a bare `struct` in w32api's rpcndr.h and the interfaces use
+          # `: public IUnknown` with pure virtual members, so it is C++-only.
+          printf '#include <windows.h>\n#include <xmllite.h>\nint main() { return 0; }\n' \
+            > smoke-hdr-xmllite.cpp
+          "$CLANG" --target="$TARGET" -x c++ -fsyntax-only smoke-hdr-xmllite.cpp
+
+          # cecompr.h shipped from Microsoft with no include guard at all; the
+          # copy in w32api/include has one added.  Regression-guard that.
+          printf '#include <windows.h>\n#include <cecompr.h>\n#include <cecompr.h>\nint main(void) { return 0; }\n' \
+            > smoke-hdr-twice.c
+          "$CLANG" --target="$TARGET" -fsyntax-only smoke-hdr-twice.c
+
+          # fwapi.h and xmllite.h now pull in w32api's specstrings.h for the
+          # old-style SAL annotations.  A TU that also pulls the overlay's
+          # <sal.h> must not warn: the two headers' overlapping macros are kept
+          # byte-identical (parameter names included) so every redefinition is
+          # benign.  This is the regression guard for that invariant.
+          printf '#include <sal.h>\n#include <windows.h>\n#include <fwapi.h>\n#include <xmllite.h>\nint main() { return 0; }\n' \
+            > smoke-hdr-sal.cpp
+          "$CLANG" --target="$TARGET" -x c++ -fsyntax-only smoke-hdr-sal.cpp
+
       # -----------------------------------------------------------------
       # Stage 3: runtimes
       # -----------------------------------------------------------------
