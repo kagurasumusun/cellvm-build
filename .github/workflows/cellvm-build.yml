@@ -283,7 +283,79 @@ jobs:
             "$BIN/llc" -mtriple="$T-pc-wince" -stop-after=finalize-isel -o - "$LL" 2>/dev/null \
               | awk '/^name:[ ]*cpp_func/{f=1} f&&/^\.\.\.$/{exit} f' | tail -n +23
           done
+          echo "===== I. which pass removes cpp_func's landing pad on armv7? ====="
+          echo "# The last run bracketed it: with cpp_func alone, armv5te/thumbv5te emit an"
+          echo "# LSDA and 8 .Ltmp references and armv7/thumbv7 emit none, so the WinEH"
+          echo "# function beside it is not involved; and on armv7 -O0 keeps the LSDA while"
+          echo "# -O1/-O2/-O3 lose it, so an IR pass is responsible.  The version sweep puts"
+          echo "# the boundary at hasV6Ops() && !isThumb1Only().  This table reduces"
+          echo "# -print-after-all to one row per dump: the first Y->n flip names the pass."
+          for T in armv5te armv7; do
+            echo "----- $T-pc-wince -O2 -----"
+            "$BIN/llc" -mtriple="$T-pc-wince" -O2 -print-after-all -o /dev/null "$TMP/only-cpp.ll" 2>&1 | awk '
+              /^\*\*\* (IR|MIR) Dump /{
+                if (n != "") printf "  %-60s personality=%s landingpad=%s EH_LABEL=%s\n", n, (p?"Y":"n"), (l?"Y":"n"), (e?"Y":"n")
+                n=substr($0,5,60); p=0; l=0; e=0; next }
+              /personality/{p=1} /landingpad/{l=1} /EH_LABEL/{e=1}
+              END{ if (n != "") printf "  %-60s personality=%s landingpad=%s EH_LABEL=%s\n", n, (p?"Y":"n"), (l?"Y":"n"), (e?"Y":"n") }' | head -120
+          done
+          echo "--- and the pass pipeline itself, for reference ---"
+          "$BIN/llc" -mtriple=armv7-pc-wince -O2 -debug-pass=Structure -o /dev/null "$TMP/only-cpp.ll" 2>&1 | head -70
+
+          echo "===== J. do the newly imported EGL / GLES2 headers compile? ====="
+          echo "# Stage 2's header smoke is skipped while the lit gate fails, so run the same"
+          echo "# checks here against the checked-out source trees rather than the assembled"
+          echo "# sysroot.  clang defines __COREDLL__, UNDER_CE, _WIN32_WCE, __MINGW32CE__,"
+          echo "# __MINGW32__, UNICODE and _UNICODE for a wince triple (Targets/OSTargets.cpp"
+          echo "# addWinCEDefines), matching what CeGCC's GCC driver used to pass on the"
+          echo "# command line, so no extra -D flags are needed."
+          INC="-isystem $PWD/mingwrt/include -isystem $PWD/w32api/include"
+          ls "$PWD/w32api/include/EGL" "$PWD/w32api/include/GLES2" 2>&1 | head -12
+          ls "$PWD/w32api/libce/libegl.def" "$PWD/w32api/libce/libglesv2.def" 2>&1 | head -4
+
+          printf '#include <stdint.h>\n#include <EGL/egl.h>\nint main(void) { return 0; }\n' > "$TMP/gl-c.c"
+          echo "----- C: stdint.h + EGL/egl.h -----"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl-c.c" 2>&1 | head -20
+          echo "  rc=$?"
+
+          # The one deviation from the CE text: CE writes `typedef __int32 int32_t;',
+          # which under this toolchain would be `long' and so a different type from
+          # mingwrt's `typedef int int32_t;'.  Hand-rolled trait, not <type_traits>,
+          # because libc++ is not built until Stage 3.
+          printf '#include <stdint.h>\n#include <EGL/egl.h>\n' > "$TMP/gl-cxx.cpp"
+          printf 'template <class A, class B> struct same_type { static const int value = 0; };\n' >> "$TMP/gl-cxx.cpp"
+          printf 'template <class A> struct same_type<A, A> { static const int value = 1; };\n' >> "$TMP/gl-cxx.cpp"
+          printf 'static_assert(same_type<EGLint, int32_t>::value == 1, "EGLint must be int32_t");\n' >> "$TMP/gl-cxx.cpp"
+          printf 'int main() { return 0; }\n' >> "$TMP/gl-cxx.cpp"
+          echo "----- C++: EGLint is int32_t (same type, not just same size) -----"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -x c++ -fsyntax-only "$TMP/gl-cxx.cpp" 2>&1 | head -20
+          echo "  rc=$?"
+
+          printf '#include <EGL/eglext.h>\n#include <GLES2/gl2.h>\n#include <GLES2/gl2ext.h>\nint main(void) { return 0; }\n' > "$TMP/gl2.c"
+          echo "----- C: eglext.h + gl2.h + gl2ext.h -----"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl2.c" 2>&1 | head -20
+          echo "  rc=$?"
+          echo "----- C++: eglext.h + gl2.h + gl2ext.h -----"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -x c++ -fsyntax-only "$TMP/gl2.c" 2>&1 | head -20
+          echo "  rc=$?"
+
+          # eglGetProcAddress is declared in CE's unusual form - a function returning a
+          # function pointer - which is why a signature regex over egl.h finds 33 of the
+          # 34 exports libegl.def lists and not this one.
+          printf '#include <EGL/egl.h>\n#include <GLES2/gl2.h>\n' > "$TMP/gl3.c"
+          printf 'static EGLBoolean (*const pSwap)(EGLDisplay, EGLSurface) = eglSwapBuffers;\n' >> "$TMP/gl3.c"
+          printf 'static void (*const pVP)(GLenum, GLint, GLint, GLsizei, GLsizei) = glViewport;\n' >> "$TMP/gl3.c"
+          printf 'static void (*(*const pGPA)(const char *))(void) = eglGetProcAddress;\n' >> "$TMP/gl3.c"
+          printf 'static GLuint (*const pCS)(GLenum) = glCreateShader;\n' >> "$TMP/gl3.c"
+          printf 'int main(void) { return pSwap && pVP && pGPA && pCS; }\n' >> "$TMP/gl3.c"
+          echo "----- C: eglSwapBuffers + glViewport + eglGetProcAddress + glCreateShader -----"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl3.c" 2>&1 | head -20
+          echo "  rc=$?"
+          echo "----- and on the x86 flavor of the parity target -----"
+          "$BIN/clang" --target=i386-pc-wince $W $INC -fsyntax-only "$TMP/gl3.c" 2>&1 | head -20
+          echo "  rc=$?"
           echo "===== diagnostics done ====="
+
 
 
       - name: "Stage 1: WinCE lit tests"
