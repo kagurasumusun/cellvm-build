@@ -315,8 +315,9 @@ jobs:
 
           printf '#include <stdint.h>\n#include <EGL/egl.h>\nint main(void) { return 0; }\n' > "$TMP/gl-c.c"
           echo "----- C: stdint.h + EGL/egl.h -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl-c.c" 2>&1 | head -20
-          echo "  rc=$?"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl-c.c" > "$TMP/out.txt" 2>&1; RC=$?
+          head -20 "$TMP/out.txt"
+          echo "  clang rc=$RC"
 
           # The one deviation from the CE text: CE writes `typedef __int32 int32_t;',
           # which under this toolchain would be `long' and so a different type from
@@ -328,32 +329,37 @@ jobs:
           printf 'static_assert(same_type<EGLint, int32_t>::value == 1, "EGLint must be int32_t");\n' >> "$TMP/gl-cxx.cpp"
           printf 'int main() { return 0; }\n' >> "$TMP/gl-cxx.cpp"
           echo "----- C++: EGLint is int32_t (same type, not just same size) -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -x c++ -fsyntax-only "$TMP/gl-cxx.cpp" 2>&1 | head -20
-          echo "  rc=$?"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -x c++ -fsyntax-only "$TMP/gl-cxx.cpp" > "$TMP/out.txt" 2>&1; RC=$?
+          head -20 "$TMP/out.txt"
+          echo "  clang rc=$RC"
 
-          printf '#include <EGL/eglext.h>\n#include <GLES2/gl2.h>\n#include <GLES2/gl2ext.h>\nint main(void) { return 0; }\n' > "$TMP/gl2.c"
-          echo "----- C: eglext.h + gl2.h + gl2ext.h -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl2.c" 2>&1 | head -20
-          echo "  rc=$?"
-          echo "----- C++: eglext.h + gl2.h + gl2ext.h -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -x c++ -fsyntax-only "$TMP/gl2.c" 2>&1 | head -20
-          echo "  rc=$?"
+          printf '#include <EGL/egl.h>\n#include <EGL/eglext.h>\n#include <GLES2/gl2.h>\n#include <GLES2/gl2ext.h>\nint main(void) { return 0; }\n' > "$TMP/gl2.c"
+          echo "----- C: egl.h + eglext.h + gl2.h + gl2ext.h -----"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl2.c" > "$TMP/out.txt" 2>&1; RC=$?
+          head -20 "$TMP/out.txt"
+          echo "  clang rc=$RC"
+          echo "----- C++: egl.h + eglext.h + gl2.h + gl2ext.h -----"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -x c++ -fsyntax-only "$TMP/gl2.c" > "$TMP/out.txt" 2>&1; RC=$?
+          head -20 "$TMP/out.txt"
+          echo "  clang rc=$RC"
 
           # eglGetProcAddress is declared in CE's unusual form - a function returning a
           # function pointer - which is why a signature regex over egl.h finds 33 of the
           # 34 exports libegl.def lists and not this one.
           printf '#include <EGL/egl.h>\n#include <GLES2/gl2.h>\n' > "$TMP/gl3.c"
           printf 'static EGLBoolean (*const pSwap)(EGLDisplay, EGLSurface) = eglSwapBuffers;\n' >> "$TMP/gl3.c"
-          printf 'static void (*const pVP)(GLenum, GLint, GLint, GLsizei, GLsizei) = glViewport;\n' >> "$TMP/gl3.c"
+          printf 'static void (*const pVP)(GLint, GLint, GLsizei, GLsizei) = glViewport;\n' >> "$TMP/gl3.c"
           printf 'static void (*(*const pGPA)(const char *))(void) = eglGetProcAddress;\n' >> "$TMP/gl3.c"
           printf 'static GLuint (*const pCS)(GLenum) = glCreateShader;\n' >> "$TMP/gl3.c"
           printf 'int main(void) { return pSwap && pVP && pGPA && pCS; }\n' >> "$TMP/gl3.c"
           echo "----- C: eglSwapBuffers + glViewport + eglGetProcAddress + glCreateShader -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl3.c" 2>&1 | head -20
-          echo "  rc=$?"
+          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl3.c" > "$TMP/out.txt" 2>&1; RC=$?
+          head -20 "$TMP/out.txt"
+          echo "  clang rc=$RC"
           echo "----- and on the x86 flavor of the parity target -----"
-          "$BIN/clang" --target=i386-pc-wince $W $INC -fsyntax-only "$TMP/gl3.c" 2>&1 | head -20
-          echo "  rc=$?"
+          "$BIN/clang" --target=i386-pc-wince $W $INC -fsyntax-only "$TMP/gl3.c" > "$TMP/out.txt" 2>&1; RC=$?
+          head -20 "$TMP/out.txt"
+          echo "  clang rc=$RC"
           echo "===== diagnostics done ====="
 
 
@@ -653,8 +659,10 @@ jobs:
           fi
 
           # In C++ the two must not merely coexist, they must be the same type.
-          printf '#include <stdint.h>\n#include <type_traits>\n#include <EGL/egl.h>\n' > smoke-hdr-egl-cxx.cpp
-          printf 'static_assert(std::is_same<EGLint, int32_t>::value, "EGLint must be int32_t");\n' >> smoke-hdr-egl-cxx.cpp
+          printf '#include <stdint.h>\n#include <EGL/egl.h>\n' > smoke-hdr-egl-cxx.cpp
+          printf 'template <class A, class B> struct same_type { static const int value = 0; };\n' >> smoke-hdr-egl-cxx.cpp
+          printf 'template <class A> struct same_type<A, A> { static const int value = 1; };\n' >> smoke-hdr-egl-cxx.cpp
+          printf 'static_assert(same_type<EGLint, int32_t>::value == 1, "EGLint must be int32_t");\n' >> smoke-hdr-egl-cxx.cpp
           printf 'int main() { return 0; }\n' >> smoke-hdr-egl-cxx.cpp
           if "$CLANG" --target="$TARGET" -x c++ -fsyntax-only smoke-hdr-egl-cxx.cpp; then
             echo "  ok    C++  EGLint is int32_t (same type, not just same size)"
@@ -662,21 +670,28 @@ jobs:
             echo "  FAIL  C++  EGLint is int32_t"; FAILED="$FAILED CXX:eglint-type"
           fi
 
-          # eglext.h includes only EGL/eglplatform.h, so it is self-contained;
-          # gl2ext.h does NOT include gl2.h, so CE's own order is gl2.h first.
+          # eglext.h is NOT self-contained: it includes only EGL/eglplatform.h but
+          # uses EGLBoolean, EGLDisplay, EGLSurface and EGLint, which CE declares
+          # in egl.h:22-28.  eglplatform.h supplies just the EGLNative* aliases and
+          # the EGLAPIENTRY / EGLAPI dllimport boilerplate, so egl.h has to come
+          # first - which is also how upstream Khronos eglext.h has always worked,
+          # so the header is left exactly as CE shipped it and the include order is
+          # what gets checked.  CI 33778104248 caught this: the C and C++ attempts
+          # both failed on unknown-type-name EGLDisplay at eglext.h:74-75.
+          # gl2ext.h does NOT include gl2.h either, so CE's own order is gl2.h first.
           # gl2platform.h supplies GL_APICALL/GL_APIENTRY, and eglplatform.h pulls
           # <windows.h> under _WIN32 - which clang does define for wince - for the
           # HDC/HWND/HBITMAP aliases of the EGLNative* types.
-          printf '#include <EGL/eglext.h>\n#include <GLES2/gl2.h>\n#include <GLES2/gl2ext.h>\nint main(void) { return 0; }\n' > smoke-hdr-gles.c
+          printf '#include <EGL/egl.h>\n#include <EGL/eglext.h>\n#include <GLES2/gl2.h>\n#include <GLES2/gl2ext.h>\nint main(void) { return 0; }\n' > smoke-hdr-gles.c
           if "$CLANG" --target="$TARGET" -fsyntax-only smoke-hdr-gles.c; then
-            echo "  ok    C    EGL/eglext.h + GLES2/gl2.h + GLES2/gl2ext.h"
+            echo "  ok    C    EGL/egl.h + eglext.h + GLES2/gl2.h + gl2ext.h"
           else
-            echo "  FAIL  C    EGL/eglext.h + GLES2/gl2.h + GLES2/gl2ext.h"; FAILED="$FAILED C:eglext-gles"
+            echo "  FAIL  C    EGL/egl.h + eglext.h + GLES2/gl2.h + gl2ext.h"; FAILED="$FAILED C:eglext-gles"
           fi
           if "$CLANG" --target="$TARGET" -x c++ -fsyntax-only smoke-hdr-gles.c; then
-            echo "  ok    C++  EGL/eglext.h + GLES2/gl2.h + GLES2/gl2ext.h"
+            echo "  ok    C++  EGL/egl.h + eglext.h + GLES2/gl2.h + gl2ext.h"
           else
-            echo "  FAIL  C++  EGL/eglext.h + GLES2/gl2.h + GLES2/gl2ext.h"; FAILED="$FAILED CXX:eglext-gles"
+            echo "  FAIL  C++  EGL/egl.h + eglext.h + GLES2/gl2.h + gl2ext.h"; FAILED="$FAILED CXX:eglext-gles"
           fi
 
           # And a real use of both libraries' entry points, so their declarations are
@@ -687,7 +702,7 @@ jobs:
           # regex over egl.h finds 33 of the 34 exports and not this one.
           printf '#include <EGL/egl.h>\n#include <GLES2/gl2.h>\n' > smoke-use-gl.c
           printf 'static EGLBoolean (*const pSwap)(EGLDisplay, EGLSurface) = eglSwapBuffers;\n' >> smoke-use-gl.c
-          printf 'static void (*const pVP)(GLenum, GLint, GLint, GLsizei, GLsizei) = glViewport;\n' >> smoke-use-gl.c
+          printf 'static void (*const pVP)(GLint, GLint, GLsizei, GLsizei) = glViewport;\n' >> smoke-use-gl.c
           printf 'static void (*(*const pGPA)(const char *))(void) = eglGetProcAddress;\n' >> smoke-use-gl.c
           printf 'static GLuint (*const pCS)(GLenum) = glCreateShader;\n' >> smoke-use-gl.c
           printf 'int main(void) { return pSwap && pVP && pGPA && pCS; }\n' >> smoke-use-gl.c
