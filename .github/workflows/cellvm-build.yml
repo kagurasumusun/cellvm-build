@@ -186,16 +186,33 @@ jobs:
           "$BIN/clang" -target i386-pc-wince $W -c "$TMP/plain.c" -o "$TMP/plain.o" 2>&1 | sed -n '1,70p'
           echo "  rc=$?"
 
-          echo "===== B. cpp_func frame per triple (thumbv7 loses .personality/.handlerdata) ====="
-          for T in armv5te thumbv5te thumbv7; do
-            echo "----- $T-pc-wince : directive sequence -----"
+          echo "===== B. cpp_func frame per triple: is the loss v7-specific or Thumb-specific? ====="
+          echo "# thumbv7 loses .personality/.handlerdata AND the whole landing pad"
+          echo "# (.Lfunc_begin0, the .Ltmp* EH_LABELs, the %lpad block, __cxa_end_cleanup"
+          echo "# and the LSDA), while armv5te and thumbv5te keep all of it.  armv7 is the"
+          echo "# discriminator: if armv7 also loses it, the cause is the v7 architecture"
+          echo "# version; if armv7 keeps it, the cause is Thumb."
+          for T in armv5te thumbv5te armv7 thumbv7; do
+            echo "----- $T-pc-wince -----"
             "$BIN/llc" -mtriple="$T-pc-wince" -o - "$LL" 2>/dev/null \
-              | sed -n '/^cpp_func:/,/^seh_func:/p' \
-              | grep -nE '\.seh_proc|\.fnstart|\.personality|\.handlerdata|\.fnend|\.seh_endproc|\.seh_handler|\.extab|\.seh_save|\.seh_endprologue|\.seh_stackalloc' \
-              | head -24
-            echo "----- $T-pc-wince : raw cpp_func region (first 34 lines) -----"
-            "$BIN/llc" -mtriple="$T-pc-wince" -o - "$LL" 2>/dev/null \
-              | sed -n '/^cpp_func:/,/^seh_func:/p' | head -34
+              | sed -n '/^cpp_func:/,/^seh_func:/p' > "$TMP/$T.txt"
+            for pat in '.personality' '.handlerdata' 'GCC_except_table' '.Lfunc_begin0' \
+                       'EH_LABEL' '%lpad' '__cxa_end_cleanup' '.cantunwind' '.fnstart' '.fnend'; do
+              printf '  %-22s %s\n' "$pat" "$(grep -cF -- "$pat" "$TMP/$T.txt")"
+            done
+          done
+
+          echo "===== C. does cpp_func keep its landing pad through instruction selection? ====="
+          for T in thumbv5te thumbv7; do
+            echo "----- $T-pc-wince : MIR after finalize-isel, cpp_func -----"
+            "$BIN/llc" -mtriple="$T-pc-wince" -stop-after=finalize-isel -o - "$LL" 2>/dev/null \
+              | awk '/^name:[ ]*cpp_func/{f=1} f&&/^\.\.\.$/{exit} f' > "$TMP/$T.mir"
+            echo "  MIR lines: $(wc -l < "$TMP/$T.mir")"
+            for pat in 'EH_LABEL' 'landingpad' 'LandingPad' 'invoke' 'resume' 'personality'; do
+              printf '  %-14s %s\n' "$pat" "$(grep -cE -- "$pat" "$TMP/$T.mir")"
+            done
+            echo "  --- first 22 MIR lines ---"
+            sed -n '1,22p' "$TMP/$T.mir"
           done
           echo "===== diagnostics done ====="
 
