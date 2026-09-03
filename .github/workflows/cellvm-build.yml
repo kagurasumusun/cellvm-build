@@ -137,6 +137,7 @@ jobs:
 
           ./build/bin/llvm-lit -sv --timeout 900 \
             llvm-project/clang/test/Driver/wince.c \
+            llvm-project/clang/test/Preprocessor/wince-version-macros.c \
             llvm-project/clang/test/CodeGen/wince-seh.c \
             llvm-project/clang/test/CodeGen/wince-x86-seh.c \
             llvm-project/clang/test/CodeGen/ARM/wince-ehabi-tables.c \
