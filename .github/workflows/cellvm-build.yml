@@ -106,7 +106,7 @@ jobs:
         run: |
           cmake --build build --target clang lld llc \
             llvm-ar llvm-ranlib llvm-dlltool llvm-nm llvm-mc llvm-readobj \
-            llvm-objdump llvm-objcopy llvm-rc llvm-config \
+            llvm-objdump llvm-objcopy llvm-rc llvm-config llvm-pdbutil \
             FileCheck split-file not count
 
           BIN=build/bin
@@ -156,6 +156,7 @@ jobs:
             llvm-project/lld/test/COFF/wince-exidx-sort.s \
             llvm-project/lld/test/COFF/wince-image.s \
             llvm-project/lld/test/COFF/wince-pdata.test \
+            llvm-project/lld/test/COFF/wince-pdb.test \
             llvm-project/lld/test/COFF/wince-range-thunk.s \
             llvm-project/lld/test/COFF/wince-range-thunk-thumb.s \
             llvm-project/lld/test/COFF/wince-thumb-bit.s \
@@ -193,7 +194,7 @@ jobs:
           for t in clang clang++ clang-cl lld ld.lld lld-link \
                    llvm-ar llvm-ranlib llvm-dlltool llvm-lib llvm-nm llvm-mc \
                    llvm-readobj llvm-objdump llvm-objcopy llvm-strip llvm-rc \
-                   llvm-windres llvm-config; do
+                   llvm-windres llvm-config llvm-pdbutil; do
             if [ -e "build/bin/$t" ] || [ -L "build/bin/$t" ]; then
               cp -a "build/bin/$t" "$BIN/"
             fi
