@@ -137,6 +137,7 @@ jobs:
 
           ./build/bin/llvm-lit -sv --timeout 900 \
             llvm-project/clang/test/Driver/wince.c \
+            llvm-project/clang/test/Driver/wince-unsupported-arch.c \
             llvm-project/clang/test/Preprocessor/wince-version-macros.c \
             llvm-project/clang/test/CodeGen/wince-seh.c \
             llvm-project/clang/test/CodeGen/wince-x86-seh.c \
@@ -245,8 +246,30 @@ jobs:
           # Every case is reported rather than aborting on the first failure, so
           # one run gives the status of the whole set (CI 33762022553 aborted at
           # fwapi.h and left wzcsapi.h and xmllite.h unmeasured).
+          #
+          # wzcsapi.h is deliberately absent: it was imported, measured, then
+          # removed.  Its single include, <ntddndis.h>, exists in w32api only
+          # under include/ddk/ - cp -r installs that as
+          # <sysroot>/include/ddk/ntddndis.h, which an angle-bracket include
+          # cannot reach (CI 33762994298: "'ntddndis.h' file not found") - and
+          # that ddk copy is 7655 B and defines none of the thirteen
+          # NDIS_802_11_* types wzcsapi.h uses.  The CE 6.0 DDK original
+          # (PUBLIC/COMMON/DDK/INC/ntddndis.h, 122806 B) does define them, but
+          # it includes <guiddef.h>, and CE's guiddef.h redefines IsEqualGUID
+          # and operator== inside a _SYS_GUID_OPERATORS_ block that no w32api
+          # header ever sets.  objbase.h:76-87 already defines
+          # `inline BOOL IsEqualGUID(REFGUID, REFGUID)` with no guard, so CE's
+          # `__inline int IsEqualGUID` is a conflicting redefinition in C++;
+          # windows.h reaches objbase.h through ole2.h, which would break every
+          # C++ TU that includes wzcsapi.h.  Guarding objbase.h with
+          # _SYS_GUID_OPERATORS_ is the MS convention and would fix it, but it
+          # edits the COM dialect that all of Stage 3 and the libc++ runtime
+          # build depend on, to enable a header CeGCC does not ship either
+          # (cegcc/src/w32api/include has no wzcsapi.h, ntddndis.h or
+          # guiddef.h).  libwzcsapi.def stays: an import library is a link
+          # surface and needs no header.
           FAILED=""
-          for h in cecompr.h diskio.h fatutil.h fwapi.h types.h wzcsapi.h; do
+          for h in cecompr.h diskio.h fatutil.h fwapi.h types.h; do
             printf '#include <windows.h>\n#include <%s>\nint main(void) { return 0; }\n' "$h" \
               > "smoke-hdr-$h.c"
             if "$CLANG" --target="$TARGET" -fsyntax-only "smoke-hdr-$h.c"; then
