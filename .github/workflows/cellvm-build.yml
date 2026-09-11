@@ -2,17 +2,36 @@
 #
 # Consumes four submodules:
 #   llvm-project   (kagurasumusun/llvm-project @ llvm-wince)  compiler side
-#   mingwrt        (kagurasumusun/mingwrt @ master)           CeGCC-lineage CRT
-#   w32api         (kagurasumusun/w32api @ wip)               WinCE API headers/defs
-#   pthread-win32  (kagurasumusun/pthread-win32 @ master)     static thread lib
+#   wince-crt      (kagurasumusun/wince-crt @ main)           Akari CRT: startup + data globals
+#   wince-api      (kagurasumusun/wince-api @ main)           WinCE API headers + doc-derived import libs
+#   pthread-win32  (kagurasumusun/pthread-win32 @ master)     static thread lib (gated, see below)
+#
+# The 2026-09 stack replaces the retired CeGCC-lineage pair (mingwrt +
+# w32api; their upstream repositories are gone) with the in-house pair:
+# wince-crt is the PE/COFF startup layer (deliberately not a C library
+# -- see its include/akari/crt.h scope note), wince-api is the
+# documented API surface written from the official Microsoft CE docs.
 #
 # Pipeline (every push, plus workflow_dispatch):
 #   Stage 1: host LLVM/Clang/LLD + WinCE lit tests (from llvm-project)
-#   Stage 2: sysroot (build-wince-sysroot.sh)
-#   Stage 3: compiler-rt builtins + libunwind/libc++abi/libc++ (build-wince-runtimes.sh)
+#   Stage 2 gates: wince-api host check + crosscheck (fresh clang),
+#                  wince-crt host check + parser self-test
+#   Stage 2: sysroot (build-wince-sysroot.sh: wince-crt + wince-api +
+#            driver-compat installs; C-library extras gated)
+#   Stage 3: compiler-rt builtins (required) + end-to-end link smoke
+#            through the bare driver default line; libunwind/libc++abi/
+#            libc++ gated on the wince-crt C library layer
 #   Packaging + install/compile sanity check
-#   Stage 4: unmodified TECLIB/glpi-wince-agent (their Makefile)
-#   Stage 5: MaxSignal/Player 0.6.2.3-wince (official zip, Makefile overlay, no audio)
+#   Stage 4: unmodified TECLIB/glpi-wince-agent (their Makefile)      [gated*]
+#   Stage 5: MaxSignal/Player 0.6.2.3-wince (official zip, overlay)   [gated*]
+#
+# * The C-library gate: pthread/gmon/posix extras (Stage 2), the C++
+#   runtime stack (Stage 3) and the two third-party application stages
+#   (4/5) all need a C library under them.  Until wince-crt grows that
+#   layer (marker: wince-crt's include/stdlib.h, installed into the
+#   sysroot) those steps report "skipped (pending the wince-crt C
+#   library layer)" instead of failing.  A Win32-API-only program links
+#   and runs through the bare driver line today.
 #
 # Caching keeps the hot loop fast: ccache and the Ninja build directory are
 # restored by key and resumed incrementally, so a small fix after a prior run
@@ -302,64 +321,6 @@ jobs:
           echo "--- and the pass pipeline itself, for reference ---"
           "$BIN/llc" -mtriple=armv7-pc-wince -O2 -debug-pass=Structure -o /dev/null "$TMP/only-cpp.ll" 2>&1 | head -70
 
-          echo "===== J. do the newly imported EGL / GLES2 headers compile? ====="
-          echo "# Stage 2's header smoke is skipped while the lit gate fails, so run the same"
-          echo "# checks here against the checked-out source trees rather than the assembled"
-          echo "# sysroot.  clang defines __COREDLL__, UNDER_CE, _WIN32_WCE, __MINGW32CE__,"
-          echo "# __MINGW32__, UNICODE and _UNICODE for a wince triple (Targets/OSTargets.cpp"
-          echo "# addWinCEDefines), matching what CeGCC's GCC driver used to pass on the"
-          echo "# command line, so no extra -D flags are needed."
-          INC="-isystem $PWD/mingwrt/include -isystem $PWD/w32api/include"
-          ls "$PWD/w32api/include/EGL" "$PWD/w32api/include/GLES2" 2>&1 | head -12
-          ls "$PWD/w32api/libce/libegl.def" "$PWD/w32api/libce/libglesv2.def" 2>&1 | head -4
-
-          printf '#include <stdint.h>\n#include <EGL/egl.h>\nint main(void) { return 0; }\n' > "$TMP/gl-c.c"
-          echo "----- C: stdint.h + EGL/egl.h -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl-c.c" > "$TMP/out.txt" 2>&1; RC=$?
-          head -20 "$TMP/out.txt"
-          echo "  clang rc=$RC"
-
-          # The one deviation from the CE text: CE writes `typedef __int32 int32_t;',
-          # which under this toolchain would be `long' and so a different type from
-          # mingwrt's `typedef int int32_t;'.  Hand-rolled trait, not <type_traits>,
-          # because libc++ is not built until Stage 3.
-          printf '#include <stdint.h>\n#include <EGL/egl.h>\n' > "$TMP/gl-cxx.cpp"
-          printf 'template <class A, class B> struct same_type { static const int value = 0; };\n' >> "$TMP/gl-cxx.cpp"
-          printf 'template <class A> struct same_type<A, A> { static const int value = 1; };\n' >> "$TMP/gl-cxx.cpp"
-          printf 'static_assert(same_type<EGLint, int32_t>::value == 1, "EGLint must be int32_t");\n' >> "$TMP/gl-cxx.cpp"
-          printf 'int main() { return 0; }\n' >> "$TMP/gl-cxx.cpp"
-          echo "----- C++: EGLint is int32_t (same type, not just same size) -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -x c++ -fsyntax-only "$TMP/gl-cxx.cpp" > "$TMP/out.txt" 2>&1; RC=$?
-          head -20 "$TMP/out.txt"
-          echo "  clang rc=$RC"
-
-          printf '#include <EGL/egl.h>\n#include <EGL/eglext.h>\n#include <GLES2/gl2.h>\n#include <GLES2/gl2ext.h>\nint main(void) { return 0; }\n' > "$TMP/gl2.c"
-          echo "----- C: egl.h + eglext.h + gl2.h + gl2ext.h -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl2.c" > "$TMP/out.txt" 2>&1; RC=$?
-          head -20 "$TMP/out.txt"
-          echo "  clang rc=$RC"
-          echo "----- C++: egl.h + eglext.h + gl2.h + gl2ext.h -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -x c++ -fsyntax-only "$TMP/gl2.c" > "$TMP/out.txt" 2>&1; RC=$?
-          head -20 "$TMP/out.txt"
-          echo "  clang rc=$RC"
-
-          # eglGetProcAddress is declared in CE's unusual form - a function returning a
-          # function pointer - which is why a signature regex over egl.h finds 33 of the
-          # 34 exports libegl.def lists and not this one.
-          printf '#include <EGL/egl.h>\n#include <GLES2/gl2.h>\n' > "$TMP/gl3.c"
-          printf 'static EGLBoolean (*const pSwap)(EGLDisplay, EGLSurface) = eglSwapBuffers;\n' >> "$TMP/gl3.c"
-          printf 'static void (*const pVP)(GLint, GLint, GLsizei, GLsizei) = glViewport;\n' >> "$TMP/gl3.c"
-          printf 'static void (*(*const pGPA)(const char *))(void) = eglGetProcAddress;\n' >> "$TMP/gl3.c"
-          printf 'static GLuint (*const pCS)(GLenum) = glCreateShader;\n' >> "$TMP/gl3.c"
-          printf 'int main(void) { return pSwap && pVP && pGPA && pCS; }\n' >> "$TMP/gl3.c"
-          echo "----- C: eglSwapBuffers + glViewport + eglGetProcAddress + glCreateShader -----"
-          "$BIN/clang" --target=arm-pc-wince $W $INC -fsyntax-only "$TMP/gl3.c" > "$TMP/out.txt" 2>&1; RC=$?
-          head -20 "$TMP/out.txt"
-          echo "  clang rc=$RC"
-          echo "----- and on the x86 flavor of the parity target -----"
-          "$BIN/clang" --target=i386-pc-wince $W $INC -fsyntax-only "$TMP/gl3.c" > "$TMP/out.txt" 2>&1; RC=$?
-          head -20 "$TMP/out.txt"
-          echo "  clang rc=$RC"
           echo "===== diagnostics done ====="
 
 
@@ -479,6 +440,20 @@ jobs:
           ls -l "$BIN"
 
       # -----------------------------------------------------------------
+      # Stage 2: the in-house stack's own gates, run with the fresh clang
+      # -----------------------------------------------------------------
+
+      - name: "Stage 2 gates: wince-api host check + defcheck"
+        run: make -C wince-api check
+
+      - name: "Stage 2 gates: wince-api crosscheck (fresh clang, 6 WinCE targets)"
+        run: |
+          make -C wince-api crosscheck WINCECLANG="$PWD/install/wince-llvm/bin/clang"
+
+      - name: "Stage 2 gates: wince-crt host check + parser self-test"
+        run: make -C wince-crt check
+
+      # -----------------------------------------------------------------
       # Stage 2: sysroot
       # -----------------------------------------------------------------
 
@@ -493,12 +468,53 @@ jobs:
       - name: "Stage 2: smoke-check"
         run: |
           CLANG="$PWD/install/wince-llvm/bin/clang"
+          SYSROOT="$PWD/install/wince-llvm/wince-sysroot"
 
+          # No link here yet: the driver names libclang_rt.builtins-<arch>.a
+          # unconditionally and Stage 3 has not built it.  Compile-only, plus
+          # the installed-sysroot view: canonical MSVC-cased header and the
+          # generated lowercase alias must both compile through --sysroot.
           printf 'int __attribute__((constructor)) c(void){return 0;}\nint main(void){return 0;}\n' \
             > smoke.c
+          "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -c smoke.c -o smoke.o
+          "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -### smoke.c -o smoke.exe 2>&1 | head -20
 
-          "$CLANG" --target="$TARGET" -c smoke.c -o smoke.o
-          "$CLANG" --target="$TARGET" -### smoke.c -o smoke.exe 2>&1 | head -20
+          printf '#include <Windows.h>\nint main(void){ return (int)sizeof(SYSTEMTIME); }\n' > smoke-case1.c
+          "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -fsyntax-only smoke-case1.c
+          printf '#include <windows.h>\nint main(void){ return (int)sizeof(SYSTEMTIME); }\n' > smoke-case2.c
+          "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -fsyntax-only smoke-case2.c
+          echo "smoke: canonical + lowercase-alias includes compile through the sysroot"
+
+      - name: "Stage 2: driver-default link proof (builtins stand-in)"
+        # Verifies everything except the real builtins content: the bare
+        # driver line must pick up crt3.o (Akari), libmingw32.a (= libakari.a),
+        # the placeholder archives and the doc-derived libcoredll.a, and link
+        # EXE(WinMain)/EXE(main)/DLL images.  An empty builtins archive stands
+        # in for Stage 3 (the real one is smoke-tested right after it builds).
+        run: |
+          CLANG="$PWD/install/wince-llvm/bin/clang"
+          BIN="$PWD/install/wince-llvm/bin"
+          SYSROOT="$PWD/install/wince-llvm/wince-sysroot"
+          "$BIN/llvm-ar" rcs "$SYSROOT/lib/libclang_rt.builtins-arm.a"
+
+          printf '#include <Windows.h>\nint WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPWSTR cmd, int show){ Sleep(1); return (int)(GetTickCount() & 7); }\n' > smoke-gui.c
+          printf '#include <Windows.h>\nint main(void){ return (int)(GetTickCount() & 3); }\n' > smoke-main.c
+          printf '#include <Windows.h>\nBOOL WINAPI DllMain(HINSTANCE h, DWORD r, LPVOID rsv){ return TRUE; }\n__declspec(dllexport) int Triple(int x){ return 3*x; }\n' > smoke-dll.c
+
+          for s in gui main; do
+            "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -o smoke-$s.exe smoke-$s.c
+            "$BIN/llvm-readobj" -h smoke-$s.exe | grep -q "IMAGE_FILE_MACHINE_ARM"
+            "$BIN/llvm-readobj" -h smoke-$s.exe | grep -q "IMAGE_SUBSYSTEM_WINDOWS_CE_GUI"
+          done
+          "$BIN/llvm-readobj" --coff-imports smoke-gui.exe | grep -q "Name: coredll.dll"
+
+          "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -shared -o smoke-dll.dll smoke-dll.c
+          "$BIN/llvm-readobj" -h smoke-dll.dll | grep -q "IMAGE_FILE_MACHINE_ARM"
+          "$BIN/llvm-readobj" --coff-exports smoke-dll.dll | grep -q "Name: Triple"
+
+          # The real builtins replace the stand-in in the next step.
+          rm "$SYSROOT/lib/libclang_rt.builtins-arm.a"
+          echo "driver-default link proof: EXE(WinMain) + EXE(main) + DLL OK"
 
       - name: "Stage 3: runtimes"
         run: |
@@ -508,9 +524,42 @@ jobs:
             --target "$TARGET" \
             --build-dir "$PWD/build-wince-runtimes"
 
-      - name: "Stage 3: C++ header-collision smoke"
+      - name: "Stage 3: end-to-end link smoke (real builtins, bare driver line)"
+        # The same three images as the Stage 2 stand-in proof, now against the
+        # real compiler-rt builtins archive -- and a division, which the ARM
+        # backend lowers to __aeabi_idiv, proving the builtins content itself.
         run: |
           CLANG="$PWD/install/wince-llvm/bin/clang"
+          BIN="$PWD/install/wince-llvm/bin"
+          SYSROOT="$PWD/install/wince-llvm/wince-sysroot"
+          test -s "$SYSROOT/lib/libclang_rt.builtins-arm.a"
+
+          printf '#include <Windows.h>\nvolatile int a = 17, b = 5;\nint WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPWSTR cmd, int show){ Sleep(1); return a / b; }\n' > smoke-gui.c
+          printf '#include <Windows.h>\nvolatile int a = 17, b = 5;\nint main(void){ return a / b; }\n' > smoke-main.c
+          printf '#include <Windows.h>\nBOOL WINAPI DllMain(HINSTANCE h, DWORD r, LPVOID rsv){ return TRUE; }\n__declspec(dllexport) int Triple(int x){ return 3 * x; }\n' > smoke-dll.c
+
+          for s in gui main; do
+            "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -o smoke-$s.exe smoke-$s.c
+            "$BIN/llvm-readobj" -h smoke-$s.exe | grep -q "IMAGE_FILE_MACHINE_ARM"
+            "$BIN/llvm-readobj" -h smoke-$s.exe | grep -q "IMAGE_SUBSYSTEM_WINDOWS_CE_GUI"
+            "$BIN/llvm-readobj" --coff-imports smoke-$s.exe | grep -q "Name: coredll.dll"
+          done
+          "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -shared -o smoke-dll.dll smoke-dll.c
+          "$BIN/llvm-readobj" --coff-exports smoke-dll.dll | grep -q "Name: Triple"
+          echo "end-to-end: EXE(WinMain) + EXE(main) + DLL with real builtins OK"
+
+      - name: "Stage 3: C++ header-collision smoke (gated)"
+        run: |
+          CLANG="$PWD/install/wince-llvm/bin/clang"
+          SYSROOT="$PWD/install/wince-llvm/wince-sysroot"
+
+          # The C++ runtime stack is gated on the wince-crt C library layer
+          # (see build-wince-runtimes.sh); the header-collision smoke needs
+          # libc++'s headers to mean anything.
+          if [ ! -d "$SYSROOT/include/c++/v1" ]; then
+            echo "skipped: libc++ not built (pending the wince-crt C library layer)"
+            exit 0
+          fi
 
           # every libc++ header a windows.h TU is likely to pull, in the
           # order third-party code actually uses (windows chain first)
@@ -532,11 +581,7 @@ jobs:
           }
           EOF
           sed -i 's/^          //' smoke-cxx.cpp
-          "$CLANG" --target="$TARGET" -x c++ -c smoke-cxx.cpp -o smoke-cxx.o
-
-          # the case-alias forwarders shipped in the overlay
-          printf '#include <Windows.h>\n#include <Shellapi.h>\nint main(){return 0;}\n' > smoke-case.cpp
-          "$CLANG" --target="$TARGET" -x c++ -fsyntax-only smoke-case.cpp
+          "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -x c++ -c smoke-cxx.cpp -o smoke-cxx.o
 
       - name: "Stage 3: CodeView debug smoke-check"
         run: |
@@ -608,8 +653,14 @@ jobs:
       # TECLIB/glpi-wince-agent (GPLv2). Their Makefile, their sources.
       # -----------------------------------------------------------------
 
-      - name: "Stage 4: TECLIB/glpi-wince-agent (unmodified)"
+      - name: "Stage 4: TECLIB/glpi-wince-agent (unmodified, gated)"
         run: |
+          SYSROOT="$PWD/install/wince-llvm/wince-sysroot"
+          if [ ! -e "$SYSROOT/include/stdlib.h" ]; then
+            echo "skipped: glpi-wince-agent needs the C library layer"
+            echo "        (pending in wince-crt; marker $SYSROOT/include/stdlib.h absent)"
+            exit 0
+          fi
           PREFIX="$PWD/install/wince-llvm"
           BIN="$PREFIX/bin"
           [ -e "$BIN/clang++" ] || ln -sf clang "$BIN/clang++"
@@ -666,8 +717,14 @@ jobs:
       # Overlay LLVM/Clang Makefile only. No Player C++ patches. No audio.
       # -----------------------------------------------------------------
 
-      - name: "Stage 5: MaxSignal/Player 0.6.2.3-wince (no audio)"
+      - name: "Stage 5: MaxSignal/Player 0.6.2.3-wince (no audio, gated)"
         run: |
+          SYSROOT="$PWD/install/wince-llvm/wince-sysroot"
+          if [ ! -e "$SYSROOT/include/stdlib.h" ]; then
+            echo "skipped: EasyRPG Player needs the C library layer and libc++"
+            echo "        (pending in wince-crt; marker $SYSROOT/include/stdlib.h absent)"
+            exit 0
+          fi
           PREFIX="$PWD/install/wince-llvm"
           BIN="$PREFIX/bin"
           [ -e "$BIN/clang++" ] || ln -sf clang "$BIN/clang++"

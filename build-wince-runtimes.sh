@@ -2,17 +2,25 @@
 #===- build-wince-runtimes.sh - WinCE stage-3 ----------------------------===//
 #
 # Stage 3 of the WinCE toolchain build (after build-wince-sysroot.sh
-# assembled the mingwrt/w32api sysroot):
-# cross-build compiler-rt builtins for arm-pc-wince and the static C++
-# runtime stack libunwind + libc++abi + libc++, and stage the results
-# into the sysroot under the GNU names the clang driver's default link
-# line probes:
+# assembled the wince-crt + wince-api sysroot):
 #
-#   libclang_rt.builtins-arm.a   (the -lgcc replacement)
-#   libunwind.a  libc++abi.a  libc++
+#   [1/2] compiler-rt builtins for the target (the -lgcc replacement,
+#         libclang_rt.builtins-<arch>.a) -- REQUIRED gate.  Built with
+#         -ffreestanding plus the sysroot/crt-decls declaration header:
+#         the builtins are free-standing code, but int_util.c includes
+#         <stdlib.h> under _WIN32 (the abort() path is compiled out
+#         under -ffreestanding; the include is not).  crt-decls is
+#         compile-time-only and never installed into the sysroot.
 #
-# These runtimes sit on bare CE (mingwrt + COREDLL).  pthreads4w and the
-# posix shim are optional sysroot extras, not a requirement here.
+#   [2/2] libunwind + libc++abi + libc++ (static) -- GATED on the
+#         wince-crt C library layer (marker: <sysroot>/include/stdlib.h).
+#         The C++ runtime stack needs a C library underneath it (malloc,
+#         the CRT headers); with Akari still startup-only, building it
+#         would both fail to compile (missing headers) and be unusable.
+#         The gate opens automatically once wince-crt ships the layer.
+#
+# The builtins sit on the wince-api import surface (COREDLL and friends)
+# and the Akari startup objects, none of which require a C library.
 #
 # Usage:
 #   build-wince-runtimes.sh --toolchain <dir> [--sysroot <dir>] \
@@ -24,6 +32,7 @@ set -euo pipefail
 
 PROGRAM="$(basename "$0")"
 REPO_ROOT="$(cd "$(dirname "$0")/llvm-project" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 TARGET="arm-pc-wince"
 TOOLCHAIN=""
@@ -36,7 +45,7 @@ while [ $# -gt 0 ]; do
     --sysroot)   SYSROOT="$2"; shift 2 ;;
     --target)    TARGET="$2"; shift 2 ;;
     --build-dir) BLD="$2"; shift 2 ;;
-    -h|--help)   sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    -h|--help)   sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
     *) echo "$PROGRAM: unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -80,25 +89,46 @@ COMMON_CMAKE=(
   -DCMAKE_ASM_COMPILER_TARGET="$TARGET"
 )
 
-# --- compiler-rt builtins (the -lgcc replacement) ----------------------------
+# --- [1/2] compiler-rt builtins (the -lgcc replacement) ----------------------
 echo "== [1/2] compiler-rt builtins ($RT_ARCH)"
-# Builtins are the -lgcc replacement but still compile against this
-# tree's mingwrt (int_util.c abort via stdlib.h).  float.h is
-# clang-aware so resource include_next does not recurse.
-# ELF crtbegin/crtend (.init/.fini %progbits) is not the PE startup;
-# mingwrt already supplies crt3.o (CI 33355649455).
+# -ffreestanding: the builtins are the layer below any hosted runtime,
+# and it compiles int_util.c's abort() down to __builtin_trap.  The
+# crt-decls header answers the unconditional <stdlib.h> include.  PE
+# startup comes from the sysroot's Akari crt3.o/dllcrt3.o, not ELF
+# crtbegin/crtend (CI 33355649455).
+CRT_DECLS="$SCRIPT_DIR/sysroot/crt-decls"
+[ -f "$CRT_DECLS/stdlib.h" ] || {
+  echo "$PROGRAM: $CRT_DECLS/stdlib.h missing" >&2; exit 1; }
 cmake -S "$REPO_ROOT/compiler-rt/lib/builtins" -B "$BLD/builtins" \
   "${COMMON_CMAKE[@]}" \
   -DCMAKE_SYSROOT="$SYSROOT" \
-  -DCMAKE_C_FLAGS="--target=$TARGET --sysroot=$SYSROOT" \
-  -DCMAKE_CXX_FLAGS="--target=$TARGET --sysroot=$SYSROOT" \
-  -DCMAKE_ASM_FLAGS="--target=$TARGET --sysroot=$SYSROOT" \
+  -DCMAKE_C_FLAGS="--target=$TARGET --sysroot=$SYSROOT -ffreestanding -isystem $CRT_DECLS" \
+  -DCMAKE_CXX_FLAGS="--target=$TARGET --sysroot=$SYSROOT -ffreestanding -isystem $CRT_DECLS" \
+  -DCMAKE_ASM_FLAGS="--target=$TARGET --sysroot=$SYSROOT -ffreestanding -isystem $CRT_DECLS" \
   -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
   -DCOMPILER_RT_BAREMETAL_BUILD=ON \
   -DCOMPILER_RT_BUILD_CRT=OFF
 cmake --build "$BLD/builtins" -j "$(nproc 2>/dev/null || echo 2)"
 
-# --- libunwind + libc++abi + libc++ (static) ---------------------------------
+BUILTINS_A="$(find "$BLD/builtins" -name "libclang_rt.builtins-$RT_ARCH.a" -o -name "clang_rt.builtins-$RT_ARCH.lib" | head -1)"
+[ -n "$BUILTINS_A" ] || {
+  echo "$PROGRAM: builtins archive not found under $BLD/builtins" >&2; exit 1; }
+install -m 644 "$BUILTINS_A" "$SYSROOT/lib/libclang_rt.builtins-$RT_ARCH.a"
+
+# --- [2/2] libunwind + libc++abi + libc++ (static) ---------------------------
+# Gated on the wince-crt C library layer: the C++ runtime needs a real C
+# library underneath (malloc, the CRT headers).  Marker: the sysroot's
+# stdlib.h (installed by wince-crt once that layer exists -- NOT the
+# builtins' private crt-decls copy, which never enters the sysroot).
+if [ ! -e "$SYSROOT/include/stdlib.h" ]; then
+  echo "== [2/2] libunwind + libc++abi + libc++: skipped"
+  echo "        (pending the wince-crt C library layer; marker"
+  echo "         $SYSROOT/include/stdlib.h absent)"
+  echo "== done:"
+  ls -l "$SYSROOT/lib" | grep -E 'clang_rt|unwind|c\+\+'
+  exit 0
+fi
+
 echo "== [2/2] libunwind + libc++abi + libc++"
 cmake -S "$REPO_ROOT/runtimes" -B "$BLD/runtimes" \
   "${COMMON_CMAKE[@]}" \
@@ -128,27 +158,18 @@ cmake -S "$REPO_ROOT/runtimes" -B "$BLD/runtimes" \
   -DLIBCXX_ENABLE_TIME_ZONE_DATABASE=OFF \
   -DLIBCXX_HERMETIC_STATIC_LIBRARY=ON
 
-# LIBCXX_ENABLE_TIME_ZONE_DATABASE stays OFF: the runtimes configure runs
-# on a Linux CI host, so CMake's default (ON for CMAKE_SYSTEM_NAME=Linux)
-# would add the experimental tzdb sources, whose __libcpp_tzdb_directory
-# supports only __linux__ targets and #errors on WinCE ("unknown path to
-# the IANA Time Zone Database").  WinCE has no IANA tz database anyway;
-# time zone support in <chrono> is disabled by this flag.
-
-# LIBCXX_ENABLE_FILESYSTEM stays ON: <fstream> is gated on the
-# filesystem configuration macro, and OFF turns it into an empty shell
-# that nothing using ifstream can compile against.  The fs sources stay
-# unreferenced at application link time (Player/liblcf use no
-# std::filesystem), so they cost nothing there.
-
+# LIBCXX_ENABLE_TIME_ZONE_DATABASE stays OFF: WinCE has no IANA tz
+# database and the experimental tzdb sources #error on non-__linux__
+# targets ("unknown path to the IANA Time Zone Database").
+#
+# LIBCXX_ENABLE_FILESYSTEM stays ON: <fstream> is gated on the filesystem
+# configuration macro, and OFF turns it into an empty shell that nothing
+# using ifstream can compile against.
+#
 # The runtimes umbrella is one Ninja graph.  Subdirs have no build.ninja
 # (CI 33362273917: ninja: loading 'build.ninja' after libc++.a linked).
 cmake --build "$BLD/runtimes" -j "$(nproc 2>/dev/null || echo 2)"
 
-# --- stage into the sysroot (GNU names; the driver probes lib<name>.a) -------
-install -m 644 \
-  "$(find "$BLD/builtins" -name "libclang_rt.builtins-$RT_ARCH.a" -o -name "clang_rt.builtins-$RT_ARCH.lib" | head -1)" \
-  "$SYSROOT/lib/libclang_rt.builtins-$RT_ARCH.a"
 for lib in libunwind libc++abi libc++; do
   install -m 644 "$(find "$BLD/runtimes" -name "$lib.a" | head -1)" \
     "$SYSROOT/lib/$lib.a"

@@ -163,8 +163,9 @@ if [ ! -f "$PREFIX/lib/libiconv.a" ]; then
     #   (gnulib's replacement stdlib.h never includes the system header).
     #
     # - stat-w32 decides Vista-vs-dynamic-load with
-    #   _WIN32_WINNT >= _WIN32_WINNT_VISTA; w32api leaves both at their
-    #   fallbacks, and the undefined _WIN32_WINNT_VISTA evaluates to 0,
+    #   _WIN32_WINNT >= _WIN32_WINNT_VISTA; the WinCE header set leaves
+    #   both at their fallbacks, and the undefined _WIN32_WINNT_VISTA
+    #   evaluates to 0,
     #   silently claiming Vista and calling GetFinalPathNameByHandleA
     #   directly. Defining the constant restores the guarded path.
     #

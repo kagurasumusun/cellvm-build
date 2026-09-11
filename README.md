@@ -1,21 +1,34 @@
 # cellvm-build — Windows CE full toolchain build
 
 Builds the complete Windows CE cross toolchain and its proof-of-life
-applications, in the [cegcc-build](https://github.com/salman-javed-nz/cegcc-build)
+stages, in the [cegcc-build](https://github.com/salman-javed-nz/cegcc-build)
 style: **submodules + build scripts + CI**.
 
 * **Target**: Windows Embedded CE 6.0 (CE 5.0/4.x selectable), 32-bit ARM,
-  ARMv5TE / `armel` ABI (little-endian, soft-float, AAPCS), default CPU
-  `arm926ej-s` (i.MX28).
+  ARMv5TE / `armel` ABI (little-endian, soft-float, AAPCS).
 * **Compiler side**: LLVM/Clang/LLD with a WinCE driver and COFF/CE
-  support — this repository's `llvm-project` submodule (branch `llvm-wince`).
-* **CRT**: the CeGCC-lineage **mingwrt + w32api** (the `mingwrt` / `w32api`
-  submodules), built with their own `configure`/`make` using Clang in place
-  of GCC and LLVM tools in place of binutils. No bespoke CRT.
-* **Threads**: static **pthread-win32** (optional extra, linked only with
-  `-mthreads`).
-* **In-house sysroot code**: `sysroot/` (the `-pg` gmon sampler, the posix
-  shim, the include overlay).
+  support — this repository's `llvm-project` submodule (branch
+  `llvm-wince`).
+* **CRT**: **wince-crt** (the `wince-crt` submodule) — the Akari CRT:
+  PE/COFF startup objects (`crt3.o`/`dllcrt3.o` real names
+  `akari_crt0.o`/`akari_dllcrt.o`) and the per-process data globals
+  (`libakari.a`).  Akari is deliberately **not a C library**
+  (malloc/printf/string stay with the consumer's C library — see its
+  `include/akari/crt.h` scope note); the C library layer is pending
+  there and the pipeline gates on it (below).
+* **API layer**: **wince-api** (the `wince-api` submodule) — the
+  documented WinCE API surface, written from scratch from the official
+  Microsoft CE documentation: MSVC-cased headers (`include/`) and
+  doc-derived import libraries (`def/*-doc.def`, name-only exports, no
+  ordinals, no device-dump/SDK-derived names).
+* **Threads**: static **pthread-win32** (optional extra, gated on the
+  C library layer).
+* **In-house sysroot code**: `sysroot/` (the `-pg` gmon sampler, the
+  posix shim, the include overlay, the compiler-rt build declarations).
+
+The 2026-09 stack replaces the retired CeGCC-lineage pair (mingwrt +
+w32api; their upstream repositories are gone) with the in-house pair
+above.
 
 ## Repository layout
 
@@ -23,20 +36,25 @@ style: **submodules + build scripts + CI**.
 llvm-project/   submodule, kagurasumusun/llvm-project @ llvm-wince
                 (WinCE driver, cmake cache, lld/COFF CE support, lit tests;
                 compiler-side CI gate lives there)
-mingwrt/        submodule, kagurasumusun/mingwrt @ master
-w32api/         submodule, kagurasumusun/w32api @ wip
+wince-crt/      submodule, kagurasumusun/wince-crt @ main
+                (Akari CRT: startup objects + data globals)
+wince-api/      submodule, kagurasumusun/wince-api @ main
+                (WinCE API headers + doc-derived import libraries)
 pthread-win32/  submodule, kagurasumusun/pthread-win32 @ master
 sysroot/
-  gmon/           -pg sampling profiler (gcrt3.c, libgmon.c)
-  posix/          execv/execl(p)/system/waitpid/popen/pclose/signal/alarm + sys/wait.h
-  include-overlay/  headers overlaid last (SAL; MSVC-case aliases Windows.h/Shellapi.h)
+  crt-decls/      compile-time declarations for the compiler-rt builtins
+                  build only (never installed into the sysroot)
+  gmon/           -pg sampling profiler (gcrt3.c, libgmon.c)   [gated*]
+  posix/          execv/execl(p)/system/waitpid/popen/pclose/signal/alarm [gated*]
+  include-overlay/  headers overlaid last (sal.h)
   gen-include-aliases.py  emit case-alias forwarders for an app tree's
-                  MSVC-style #include spellings (run by Stage 5)
+                  #include spellings (run by Stage 5)
 build-wince-sysroot.sh      Stage 2: assemble the sysroot from the submodules
-build-wince-runtimes.sh     Stage 3: compiler-rt builtins + libunwind/libc++abi/libc++
-build-easyrpg-player.sh     Stage 5: EasyRPG Player deps + player (official zip)
+build-wince-runtimes.sh     Stage 3: compiler-rt builtins (required) +
+                            libunwind/libc++abi/libc++ (gated*)
+build-easyrpg-player.sh     Stage 5: EasyRPG Player deps + player [gated*]
 bind-cegcc-names.sh         install arm-mingw32ce-* tool names in a bin dir
-audit-coredll.py            verify COREDLL import surface vs a device dumpbin
+audit-coredll.py            doc-surface coverage readout vs a device dumpbin
 armasm/armasm-convert.py    ARM assembly (armasm) -> GNU as converter
 easyrpg-player/             MaxSignal/Player Makefile overlay (no audio)
 .github/workflows/cellvm-build.yml   full-pipeline CI (Stage 1-5)
@@ -46,14 +64,64 @@ easyrpg-player/             MaxSignal/Player Makefile overlay (no audio)
 
 ```
 stage 1  clang/lld/llvm-tools host build     (llvm-project, WinCE cmake cache)
-stage 2  sysroot: mingwrt + w32api + pthread (build-wince-sysroot.sh)
-stage 3  compiler-rt + libunwind/libc++abi/libc++  (build-wince-runtimes.sh)
-stage 4  unmodified TECLIB/glpi-wince-agent (their Makefile)     [CI]
-stage 5  MaxSignal/EasyRPG Player 0.6.2.3-wince (Makefile overlay) [CI]
+         WinCE lit gate (the fork's test set, count-asserted)
+stage 2  gates: wince-api check + crosscheck (fresh clang, 6 WinCE targets),
+         wince-crt check (host parser self-test)
+stage 2  sysroot: wince-crt + wince-api + driver-compat installs
+         (build-wince-sysroot.sh; C-library extras gated*)
+         driver-default link proof: EXE(WinMain) + EXE(main) + DLL
+stage 3  compiler-rt builtins (required) + end-to-end link smoke with the
+         real builtins (division -> __aeabi_idiv)   (build-wince-runtimes.sh)
+         libunwind/libc++abi/libc++                  [gated*]
+packaging + install/compile sanity check
+stage 4  unmodified TECLIB/glpi-wince-agent (their Makefile)     [gated*]
+stage 5  MaxSignal/EasyRPG Player 0.6.2.3-wince (Makefile overlay) [gated*]
 ```
 
-Stage 1 is also run as the compiler-side CI gate in `llvm-project` itself;
-this repository's CI runs the whole pipeline end to end.
+Stage 1 is also run as the compiler-side CI gate in `llvm-project`
+itself; this repository's CI runs the whole pipeline end to end.
+
+### The C-library gate
+
+Akari (wince-crt) is the startup layer, not a C library, and the C
+library layer is still pending there.  Everything that needs one — the
+pthread/gmon/posix sysroot extras (Stage 2), the libunwind/libc++abi/
+libc++ runtime stack (Stage 3) and the two third-party application
+stages (4/5) — is gated on the marker `wince-crt/include/stdlib.h`
+(installed into the sysroot by `build-wince-sysroot.sh` once that layer
+exists).  Until then those steps print
+`skipped (pending the wince-crt C library layer)` instead of failing,
+and a **Win32-API-only program links and runs through the bare driver
+line today** (`clang --target=arm-pc-wince -o app.exe app.c`).
+
+### Driver compatibility
+
+The WinCE clang driver names its own start files and default libraries
+(see `clang/lib/Driver/ToolChains/WinCE.cpp` in the llvm-project
+submodule).  The sysroot installs: `crt3.o`/`dllcrt3.o` (from Akari),
+`libmingw32.a` (= `libakari.a`), `libcoredll{,4,6}.a` (from wince-api's
+`def/coredll-doc.def`; the driver probes all three spellings by CE
+version), one `lib<dll>.a` per doc def file, and **empty placeholder
+archives** for `libmingwex.a`/`libceoldname.a`/`libmingwthrd.a` (the
+retired CeGCC C-library supplement layers; a link referencing their
+symbols fails with a clear `undefined symbol` error — see
+`lib/PLACEHOLDERS.md` in the assembled sysroot).
+
+Known driver gap (2026-09-10 toolchain): `-mconsole` links
+`/entry:mainCRTStartup` (the desktop spelling); the CE-documented
+`main()` entry is `mainACRTStartup` (what Akari provides).  `main()`
+programs link fine through the default GUI entry — Akari's
+`WinMainCRTStartup` dispatches to whichever of WinMain/wWinMain/main
+the image defines — and the dedicated console path is available with
+`-Wl,/entry:mainACRTStartup`.
+
+The 2026-09-10 llvm-wince toolchain also names a CE machine by its
+target (`llvm-dlltool -m arm-pc-wince`); the invented machine names
+(`armwince`/`armce`) are gone, and the driver answers a bare CE ARM
+triple with the generic default `arm7tdmi` (ARMv4T), so the ARM core is
+asked for by option (wince-crt's Makefile pins `-march=armv5tej`
+itself; `build-wince-sysroot.sh` passes `-march=armv5te
+-mfloat-abi=soft` for the gated extras).
 
 ## Building locally
 
@@ -83,70 +151,74 @@ ln -sf lld    "$BIN/lld-link"
 sh build-wince-sysroot.sh --toolchain "$BIN" --target arm-pc-wince \
   --prefix "$PWD/install/wince-llvm/wince-sysroot"
 
-# Stage 3: compiler runtimes (builtins, libunwind, libc++abi, libc++)
+# Stage 3: compiler runtimes (builtins required; C++ stack gated)
 bash build-wince-runtimes.sh --toolchain "$BIN" \
   --sysroot "$PWD/install/wince-llvm/wince-sysroot"
 
-# Smoke test
-"$BIN/clang" --target=arm-pc-wince -c -x c /dev/null -o /dev/null
-"$BIN/clang" --target=arm-pc-wince -### -x c /dev/null
+# Smoke test: the bare driver line, Win32-API-only program
+printf '#include <Windows.h>\nint WINAPI WinMain(HINSTANCE h, HINSTANCE p, LPWSTR c, int s){ Sleep(1); return 0; }\n' > app.c
+"$BIN/clang" --target=arm-pc-wince -o app.exe app.c
 ```
 
 The toolchain is then a self-contained prefix:
-`install/wince-llvm/{bin,lib,include,wince-sysroot}` with GNU-named
-libraries (`libmingw32.a`, `libcoredll.a`, `libc++.a`, ...).
-`bind-cegcc-names.sh "$BIN"` adds the `arm-mingw32ce-gcc` style names that
-unmodified CeGCC Makefiles already use (they only bind `--target=arm-pc-wince`).
+`install/wince-llvm/{bin,lib,include,wince-sysroot}` with the Akari
+startup objects, the doc-derived import libraries and GNU-spelled
+library names (`libcoredll.a`, `libws2.a`, ...).
+`bind-cegcc-names.sh "$BIN"` adds the `arm-mingw32ce-gcc` style names
+that unmodified CeGCC Makefiles already use (they only bind
+`--target=arm-pc-wince`).
 
 ## CI
 
-`.github/workflows/cellvm-build.yml` runs the full pipeline on every push
-(all branches; the work line is `main`) and on manual dispatch, on
-ubuntu-24.04, with ccache + Ninja build-directory caching. It uploads the
-toolchain tarball, the glpi-wince-agent and the EasyRPG Player builds.
-Submodule pins are bumped to states the compiler-side CI (llvm-project
-Stage 1 + WinCE lit gate) has already passed.
+`.github/workflows/cellvm-build.yml` runs the full pipeline on every
+push (all branches; the work line is `main`) and on manual dispatch, on
+ubuntu-24.04, with ccache + Ninja build-directory caching.  It uploads
+the toolchain tarball plus whatever gated stages produced.  Submodule
+pins are bumped to states the compiler-side CI (llvm-project Stage 1 +
+WinCE lit gate) has already passed.
 
 ## Documentation
 
-The authoritative specs live in the `llvm-project` submodule:
+The authoritative compiler-side specs live in the `llvm-project`
+submodule:
 
 * `llvm-project/utils/wince/README.md` — full design, audits, verification
   status, scope/non-goals (read this first).
-* `llvm-project/WINCE-HANDOFF.md` — handoff record (§14 = this
-  reorganization).
+* `llvm-project/WINCE-HANDOFF.md` — handoff record.
 * `llvm-project/utils/wince/STATUS.md` — current green state.
 
-## Collision / duplication policies (2026-09-02 sweep)
+For the sysroot stack: `wince-api/docs/` (clean-room source policy,
+per-milestone inventory) and `wince-crt/README.md` (CRT scope and the
+official-doc basis of every startup behavior).
 
-* **COREDLL defs**: `mingwrt/coredll{,4,6}.def` is the single source of
-  truth; `w32api/libce/` keeps a byte-identical mirror for its own
-  cegcc-lineage build.  `build-wince-sysroot.sh` fails the build if the
-  mirror drifts; `audit-coredll.py` cross-checks both against device dumps.
-* **excpt.h**: w32api's (ARM-shaped, included by windows.h) is canonical;
-  mingwrt's x86-legacy copy is deleted.
-* **Header macro namespace**: w32api/mingwrt must not define macros that
-  collide with C++ runtime identifiers.  Full sweep recorded in
-  llvm-project `WINCE-HANDOFF.md` §17; `basetyps.h __small` (the one live
-  hit) is excluded under clang, like `_mingw.h` already did.
-* **#include case**: the sysroot ships forwarder aliases for the common
-  MSVC spellings (`Windows.h`, `Shellapi.h`); `gen-include-aliases.py`
-  additionally generates aliases for any spelling a specific app tree
-  uses (Stage 5).  A C++ header-collision smoke (windows.h + libc++) runs
-  in Stage 3 so this class of breakage is caught in CI, not at Stage 5.
+## Policies
+
+* **COREDLL import surface**: `wince-api/def/coredll-doc.def` is the
+  single source (documented names only).  The old two-repository def
+  mirror (mingwrt ↔ w32api) is retired with the pair;
+  `audit-coredll.py` is now a coverage readout of that doc surface
+  against device dumps — informational only, it must not feed the def
+  (wince-api's source policy bans device-dump/SDK-derived names).
+* **#include case**: wince-api's headers are MSVC-cased (`Windows.h`);
+  `build-wince-sysroot.sh` generates lowercase aliases (`windows.h` →
+  `Windows.h`) for CeGCC-lineage sources on case-sensitive hosts.
+  `gen-include-aliases.py` additionally generates aliases for any
+  spelling a specific app tree uses (Stage 5).
+* **Driver-compat placeholders**: empty archives under their CeGCC
+  names, documented in the sysroot's `lib/PLACEHOLDERS.md`; the real
+  content arrives with wince-crt's C library layer.
 
 ## Verification status
 
-**Stage 5 green (2026-09-02): the full pipeline links the EasyRPG Player.**
-[Run 33600018503](https://github.com/kagurasumusun/cellvm-build/actions/runs/33600018503)
-at `c83b9f4` produced `easyrpg-player.exe` (5,346,816 bytes; MaxSignal
-0.6.2.3-wince + overlay, audio off, SDL 1.2 WINDIB). PE verified:
-`IMAGE_FILE_MACHINE_ARM`, subsystem `IMAGE_SUBSYSTEM_WINDOWS_CE_GUI (9)`,
-entry `.text+0` (WinMainCRTStartup), imports/IAT resolved, sections
-`.text/.rdata/.data/.ctors/.dtors/.ARM.exidx/.ARM.extab` (EHABI index
-merged by lld), relocations stripped (fixed image base).
+**Win32-API-only programs link through the bare driver default line:
+EXE (WinMain), EXE (main, via Akari's weak dispatch) and DLL — PE
+verified `IMAGE_FILE_MACHINE_ARM`, subsystem
+`IMAGE_SUBSYSTEM_WINDOWS_CE_GUI`, coredll.dll imports.**  compiler-rt
+builtins build against the stack (Stage 3, required gate); the C++
+runtime stack and the two application stages are gated on the pending
+wince-crt C library layer.
 
-CI compiles and links; **on-device execution is not yet verified** (no CE
-hardware in the loop). See the llvm-project docs above for the per-feature
-verification matrix and WINCE-HANDOFF.md §18 for the Stage 5 cause→fix
-table.
+Historical: the retired mingwrt+w32api stack linked the EasyRPG Player
+end to end (run 33600018503, `c83b9f4`); that bar returns when the C
+library layer lands.  CI compiles and links; **on-device execution is
+not verified** (no CE hardware in the loop).
