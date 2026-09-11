@@ -11,6 +11,8 @@
 # wince-crt is the PE/COFF startup layer (deliberately not a C library
 # -- see its include/akari/crt.h scope note), wince-api is the
 # documented API surface written from the official Microsoft CE docs.
+# The C library itself comes from the LLVM runtimes in Stage 3
+# (llvm-libc for C, libc++ for C++), not from wince-crt.
 #
 # Pipeline (every push, plus workflow_dispatch):
 #   Stage 1: host LLVM/Clang/LLD + WinCE lit tests (from llvm-project)
@@ -27,10 +29,11 @@
 #
 # * The C-library gate: pthread/gmon/posix extras (Stage 2), the C++
 #   runtime stack (Stage 3) and the two third-party application stages
-#   (4/5) all need a C library under them.  Until wince-crt grows that
-#   layer (marker: wince-crt's include/stdlib.h, installed into the
-#   sysroot) those steps report "skipped (pending the wince-crt C
-#   library layer)" instead of failing.  A Win32-API-only program links
+#   (4/5) all need a C library under them.  The C library is the LLVM
+#   runtimes' job (llvm-libc; WinCE support not yet buildable), so
+#   until Stage 3 can install it into the sysroot (marker:
+#   <sysroot>/include/stdlib.h) those steps report "skipped (pending
+#   the C library)" instead of failing.  A Win32-API-only program links
 #   and runs through the bare driver line today.
 #
 # Caching keeps the hot loop fast: ccache and the Ninja build directory are
@@ -472,18 +475,22 @@ jobs:
 
           # No link here yet: the driver names libclang_rt.builtins-<arch>.a
           # unconditionally and Stage 3 has not built it.  Compile-only, plus
-          # the installed-sysroot view: canonical MSVC-cased header and the
-          # generated lowercase alias must both compile through --sysroot.
+          # the installed-sysroot view: the documented header spellings
+          # (wince-api M100: one file per header, its documented name, no
+          # forwarder aliases) must compile through --sysroot.
           printf 'int __attribute__((constructor)) c(void){return 0;}\nint main(void){return 0;}\n' \
             > smoke.c
           "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -c smoke.c -o smoke.o
           "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -### smoke.c -o smoke.exe 2>&1 | head -20
 
+          # both documented spellings that exist as real files: the
+          # MSVC-cased primary (Windows.h) and a lowercase-documented
+          # header (aygshell.h -- its 46 documented rows spell it so)
           printf '#include <Windows.h>\nint main(void){ return (int)sizeof(SYSTEMTIME); }\n' > smoke-case1.c
           "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -fsyntax-only smoke-case1.c
-          printf '#include <windows.h>\nint main(void){ return (int)sizeof(SYSTEMTIME); }\n' > smoke-case2.c
+          printf '#include <aygshell.h>\nint main(void){ return 0; }\n' > smoke-case2.c
           "$CLANG" --target="$TARGET" --sysroot="$SYSROOT" -fsyntax-only smoke-case2.c
-          echo "smoke: canonical + lowercase-alias includes compile through the sysroot"
+          echo "smoke: documented-spelling includes compile through the sysroot"
 
       - name: "Stage 2: driver-default link proof (builtins stand-in)"
         # Verifies everything except the real builtins content: the bare
@@ -657,8 +664,8 @@ jobs:
         run: |
           SYSROOT="$PWD/install/wince-llvm/wince-sysroot"
           if [ ! -e "$SYSROOT/include/stdlib.h" ]; then
-            echo "skipped: glpi-wince-agent needs the C library layer"
-            echo "        (pending in wince-crt; marker $SYSROOT/include/stdlib.h absent)"
+            echo "skipped: glpi-wince-agent needs the C library (llvm-libc,"
+            echo "        Stage 3; marker $SYSROOT/include/stdlib.h absent)"
             exit 0
           fi
           PREFIX="$PWD/install/wince-llvm"
@@ -721,8 +728,8 @@ jobs:
         run: |
           SYSROOT="$PWD/install/wince-llvm/wince-sysroot"
           if [ ! -e "$SYSROOT/include/stdlib.h" ]; then
-            echo "skipped: EasyRPG Player needs the C library layer and libc++"
-            echo "        (pending in wince-crt; marker $SYSROOT/include/stdlib.h absent)"
+            echo "skipped: EasyRPG Player needs the C library (llvm-libc) and libc++"
+            echo "        (Stage 3; marker $SYSROOT/include/stdlib.h absent)"
             exit 0
           fi
           PREFIX="$PWD/install/wince-llvm"

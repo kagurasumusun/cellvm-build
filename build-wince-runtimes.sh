@@ -12,12 +12,14 @@
 #         under -ffreestanding; the include is not).  crt-decls is
 #         compile-time-only and never installed into the sysroot.
 #
-#   [2/2] libunwind + libc++abi + libc++ (static) -- GATED on the
-#         wince-crt C library layer (marker: <sysroot>/include/stdlib.h).
-#         The C++ runtime stack needs a C library underneath it (malloc,
-#         the CRT headers); with Akari still startup-only, building it
-#         would both fail to compile (missing headers) and be unusable.
-#         The gate opens automatically once wince-crt ships the layer.
+#   [2/2] libunwind + libc++abi + libc++ (static) -- GATED on a C
+#         library being installed in the sysroot (marker:
+#         <sysroot>/include/stdlib.h).  The C library itself is the
+#         LLVM runtimes' job too: llvm-libc for WinCE (not yet
+#         buildable; when it lands, build it ahead of this step and
+#         install its headers+archive into the sysroot).  The C++
+#         runtime stack needs it underneath (malloc, the CRT headers);
+#         until then this step reports skipped rather than failing.
 #
 # The builtins sit on the wince-api import surface (COREDLL and friends)
 # and the Akari startup objects, none of which require a C library.
@@ -116,14 +118,13 @@ BUILTINS_A="$(find "$BLD/builtins" -name "libclang_rt.builtins-$RT_ARCH.a" -o -n
 install -m 644 "$BUILTINS_A" "$SYSROOT/lib/libclang_rt.builtins-$RT_ARCH.a"
 
 # --- [2/2] libunwind + libc++abi + libc++ (static) ---------------------------
-# Gated on the wince-crt C library layer: the C++ runtime needs a real C
-# library underneath (malloc, the CRT headers).  Marker: the sysroot's
-# stdlib.h (installed by wince-crt once that layer exists -- NOT the
-# builtins' private crt-decls copy, which never enters the sysroot).
+# Gated on a C library in the sysroot (llvm-libc, Stage 3; the builtins'
+# private crt-decls copy never enters the sysroot).  The C++ runtime
+# needs a real C library underneath (malloc, the CRT headers).
 if [ ! -e "$SYSROOT/include/stdlib.h" ]; then
   echo "== [2/2] libunwind + libc++abi + libc++: skipped"
-  echo "        (pending the wince-crt C library layer; marker"
-  echo "         $SYSROOT/include/stdlib.h absent)"
+  echo "        (pending the C library in the sysroot -- llvm-libc,"
+  echo "         Stage 3; marker $SYSROOT/include/stdlib.h absent)"
   echo "== done:"
   ls -l "$SYSROOT/lib" | grep -E 'clang_rt|unwind|c\+\+'
   exit 0

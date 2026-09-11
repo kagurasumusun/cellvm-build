@@ -17,8 +17,10 @@
 #              runtime: the EXE/DLL entry points and the per-process
 #              data globals).  It is deliberately NOT a C library
 #              (malloc/printf/string stay with the consumer's C
-#              library -- see its include/akari/crt.h scope note);
-#              the C library layer is pending there.
+#              library -- see its include/akari/crt.h scope note).
+#              The C library itself comes from Stage 3: the LLVM
+#              runtimes (llvm-libc for C, libc++ for C++) built by
+#              build-wince-runtimes.sh from the llvm-project submodule.
 #   wince-api  is the documented WinCE API surface, written from
 #              scratch from the official Microsoft CE documentation:
 #              MSVC-cased headers (include/) plus doc-derived import
@@ -54,14 +56,17 @@
 # -Wl,/entry:mainACRTStartup for the dedicated console-startup path
 # until the driver spellings are revisited upstream.
 #
-# The pthread / gmon / posix extras of the old sysroot all include the C
-# library headers (stdlib.h/stdio.h/string.h/errno.h/process.h), so they
-# are gated on wince-crt growing that layer (marker: wince-crt's
-# include/stdlib.h).  They build unchanged once the marker exists.
+# The pthread / gmon / posix extras all include the C library headers
+# (stdlib.h/stdio.h/string.h/errno.h/process.h), so they are gated on
+# Stage 3 installing a C library into the sysroot (llvm-libc; marker:
+# <sysroot>/include/stdlib.h).  They build unchanged once it does.
 #
 # Result layout (driver-compatible):
-#   <sysroot>/include/...      wince-api headers (+ akari/ CRT headers,
-#                              + generated lowercase include aliases)
+#   <sysroot>/include/...      wince-api headers (+ akari/ CRT headers),
+#                              each under its documented spelling only --
+#                              no case/name forwarder aliases (M100
+#                              policy; consumers spell the documented
+#                              names)
 #   <sysroot>/lib/
 #     crt3.o dllcrt3.o         CRT startup objects (Akari)
 #     akari_crt0.o akari_dllcrt.o libakari.a   (real names)
@@ -228,27 +233,18 @@ done
 for alt in libcoredll4.a libcoredll6.a; do
   install -m 644 "$SYSROOT/lib/libcoredll.a" "$SYSROOT/lib/$alt"
 done
-# Headers: wince-api's are MSVC-cased (Windows.h), self-contained.
+# Headers: wince-api's are self-contained, each under its documented
+# dominant spelling (Windows.h, aygshell.h, bt_ddi.h, ...; the M72
+# evidence method).  No case or name forwarder aliases are generated:
+# the M100 policy is one file per header under its documented name
+# (bridging headers removed from wince-api at M100; the sysroot
+# follows).  Third-party app trees with other spellings generate their
+# own aliases at their build time via sysroot/gen-include-aliases.py.
 cp -r "$WINCEAPI_SRC/include/." "$SYSROOT/include/"
-# Lowercase include aliases: CeGCC-lineage sources #include <windows.h>
-# (lowercase), and the Linux build host's lookup is case-sensitive.  A
-# forwarder per spelling whose lowercase form is absent.  On a
-# case-insensitive host the lowercase name IS the header, so the -e test
-# skips them (and overwriting the canonical file would be wrong).
-n_alias=0
-for h in "$WINCEAPI_SRC"/include/*.h; do
-  b="$(basename "$h")"
-  lb="$(printf '%s' "$b" | tr 'A-Z' 'a-z')"
-  [ "$lb" = "$b" ] && continue
-  [ -e "$SYSROOT/include/$lb" ] && continue
-  printf '#pragma once\n/* lowercase include alias; canonical spelling: %s */\n#include "%s"\n' \
-    "$b" "$b" > "$SYSROOT/include/$lb"
-  n_alias=$((n_alias + 1))
-done
-echo "   import libraries: $n_libs  (+coredll aliases; $n_alias lowercase include aliases)"
+echo "   import libraries: $n_libs  (+coredll version-spelling copies)"
 
 # --- driver-compat placeholder archives --------------------------------------
-echo "== [3/5] driver-compat placeholders (C-library layers pending in wince-crt)"
+echo "== [3/5] driver-compat placeholders (content pending the Stage 3 C library, llvm-libc)"
 "$LLVM_AR" rcs "$SYSROOT/lib/libmingwex.a"
 "$LLVM_RANLIB" "$SYSROOT/lib/libmingwex.a"
 "$LLVM_AR" rcs "$SYSROOT/lib/libceoldname.a"
@@ -261,10 +257,10 @@ cat > "$SYSROOT/lib/PLACEHOLDERS.md" <<'EOF'
 `libmingwex.a`, `libceoldname.a` and `libmingwthrd.a` are EMPTY.  The
 WinCE clang driver's default link line names them unconditionally (they
 were the CeGCC-lineage C-library supplement / old-name-redirect / thread
--glue layers of the retired mingwrt stack).  Their real content is
-pending in the wince-crt C library layer (see wince-crt's
-include/akari/crt.h scope note: Akari is the startup layer, the C
-library is the consumer's).
+-glue layers of the retired mingwrt stack).  Their real content arrives
+with the Stage 3 C library -- llvm-libc built from the llvm-project
+submodule by build-wince-runtimes.sh (wince-crt stays the startup layer
+only; see its include/akari/crt.h scope note).
 
 Until that layer lands, a program that references their symbols fails
 at link time with a clear `undefined symbol` error (e.g. `strlen`,
@@ -273,9 +269,10 @@ links and runs.
 EOF
 
 # --- gated extras (need the C library layer) ---------------------------------
-# Marker: wince-crt growing the C library means it ships the CRT headers
-# first (stdlib.h & friends).  Everything below includes them.
-C_LIBRARY_MARKER="$WINCECRT_SRC/include/stdlib.h"
+# The C library is Stage 3's job (llvm-libc), installed into the sysroot
+# include/ by build-wince-runtimes.sh.  Everything below includes its
+# headers (stdlib.h & friends), so gate on that marker.
+C_LIBRARY_MARKER="$SYSROOT/include/stdlib.h"
 
 if [ -e "$C_LIBRARY_MARKER" ]; then
   echo "== [4/5] pthread-win32 (pthreads4w static library)"
@@ -325,8 +322,8 @@ if [ -e "$C_LIBRARY_MARKER" ]; then
   mkdir -p "$SYSROOT/include/sys"
   install -m 644 "$REPO_ROOT/sysroot/posix/sys/wait.h" "$SYSROOT/include/sys/wait.h"
 else
-  echo "== [4/5] pthread-win32: skipped (pending the wince-crt C library layer;"
-  echo "        marker wince-crt/include/stdlib.h absent)"
+  echo "== [4/5] pthread-win32: skipped (pending the Stage 3 C library,"
+  echo "        llvm-libc; marker $SYSROOT/include/stdlib.h absent)"
   echo "== [5/5] gmon + posix shim: skipped (same marker)"
 fi
 

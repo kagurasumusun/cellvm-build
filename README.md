@@ -14,8 +14,10 @@ style: **submodules + build scripts + CI**.
   `akari_crt0.o`/`akari_dllcrt.o`) and the per-process data globals
   (`libakari.a`).  Akari is deliberately **not a C library**
   (malloc/printf/string stay with the consumer's C library — see its
-  `include/akari/crt.h` scope note); the C library layer is pending
-  there and the pipeline gates on it (below).
+  `include/akari/crt.h` scope note).  The C library itself comes from
+  **Stage 3: the LLVM runtimes** (llvm-libc for C, libc++ for C++),
+  built by `build-wince-runtimes.sh` from the llvm-project submodule;
+  the pipeline gates on it landing in the sysroot (below).
 * **API layer**: **wince-api** (the `wince-api` submodule) — the
   documented WinCE API surface, written from scratch from the official
   Microsoft CE documentation: MSVC-cased headers (`include/`) and
@@ -83,16 +85,17 @@ itself; this repository's CI runs the whole pipeline end to end.
 
 ### The C-library gate
 
-Akari (wince-crt) is the startup layer, not a C library, and the C
-library layer is still pending there.  Everything that needs one — the
+The C library is the LLVM runtimes' job, not wince-crt's: llvm-libc
+for C and libc++ for C++ are Stage 3 (`build-wince-runtimes.sh`).  The
+C++ stack needs the C library underneath it, and llvm-libc does not
+build for WinCE yet, so everything that needs a C library — the
 pthread/gmon/posix sysroot extras (Stage 2), the libunwind/libc++abi/
-libc++ runtime stack (Stage 3) and the two third-party application
-stages (4/5) — is gated on the marker `wince-crt/include/stdlib.h`
-(installed into the sysroot by `build-wince-sysroot.sh` once that layer
-exists).  Until then those steps print
-`skipped (pending the wince-crt C library layer)` instead of failing,
-and a **Win32-API-only program links and runs through the bare driver
-line today** (`clang --target=arm-pc-wince -o app.exe app.c`).
+libc++ stack (Stage 3) and the two third-party application stages (4/5)
+— is gated on the marker `<sysroot>/include/stdlib.h` (installed once
+llvm-libc lands).  Until then those steps print `skipped (pending the
+C library)` instead of failing, and a **Win32-API-only program links
+and runs through the bare driver line today**
+(`clang --target=arm-pc-wince -o app.exe app.c`).
 
 ### Driver compatibility
 
@@ -199,11 +202,12 @@ official-doc basis of every startup behavior).
   `audit-coredll.py` is now a coverage readout of that doc surface
   against device dumps — informational only, it must not feed the def
   (wince-api's source policy bans device-dump/SDK-derived names).
-* **#include case**: wince-api's headers are MSVC-cased (`Windows.h`);
-  `build-wince-sysroot.sh` generates lowercase aliases (`windows.h` →
-  `Windows.h`) for CeGCC-lineage sources on case-sensitive hosts.
-  `gen-include-aliases.py` additionally generates aliases for any
-  spelling a specific app tree uses (Stage 5).
+* **#include case**: every wince-api header ships under its documented
+  dominant Header-row spelling (`Windows.h`, `aygshell.h`, `bt_ddi.h`,
+  ...; the M72 evidence method) — one file per header, no case or name
+  forwarder aliases (wince-api M100).  Third-party app trees with
+  other spellings generate their own aliases at their build time via
+  `gen-include-aliases.py` (their build, not the sysroot).
 * **Driver-compat placeholders**: empty archives under their CeGCC
   names, documented in the sysroot's `lib/PLACEHOLDERS.md`; the real
   content arrives with wince-crt's C library layer.
@@ -214,9 +218,9 @@ official-doc basis of every startup behavior).
 EXE (WinMain), EXE (main, via Akari's weak dispatch) and DLL — PE
 verified `IMAGE_FILE_MACHINE_ARM`, subsystem
 `IMAGE_SUBSYSTEM_WINDOWS_CE_GUI`, coredll.dll imports.**  compiler-rt
-builtins build against the stack (Stage 3, required gate); the C++
-runtime stack and the two application stages are gated on the pending
-wince-crt C library layer.
+builtins build against the stack (Stage 3, required gate); the C
+library (llvm-libc), the C++ runtime stack and the two application
+stages are gated until llvm-libc builds for WinCE.
 
 Historical: the retired mingwrt+w32api stack linked the EasyRPG Player
 end to end (run 33600018503, `c83b9f4`); that bar returns when the C
