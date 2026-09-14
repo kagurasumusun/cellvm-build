@@ -32,20 +32,19 @@
 # in the llvm-project submodule).  The sysroot installs:
 #
 #   crt3.o dllcrt3.o        <- akari_crt0.o / akari_dllcrt.o (real names
-#                              kept alongside)
-#   libmingw32.a            <- libakari.a (the CRT glue archive)
-#   libcoredll{,4,6}.a      <- wince-api def/coredll-doc.def (the driver
-#                              probes all three spellings by CE version)
+#                              kept alongside; the driver asks for these
+#                              spellings, and for gcrt3.o with -pg)
+#   libakari.a              <- the Akari CRT archive, under its own name
+#   libcoredll{,4,6}.a      <- def/coredll-doc.def (the driver probes all
+#                              three spellings by CE version)
 #   lib<dll>.a              <- every other def/<dll>-doc.def
-#   libmingwex.a libceoldname.a libmingwthrd.a
-#                           <- EMPTY placeholder archives.  The driver's
-#                              default link line names them unconditionally
-#                              (the CeGCC C-library supplement layers); the
-#                              real content arrives with wince-crt's C
-#                              library layer.  Until then a link that
-#                              references their symbols fails with a clear
-#                              undefined-symbol error instead of a missing
-#                              file error.  See lib/PLACEHOLDERS.md.
+#
+# No mingwrt-lineage archive is installed any more.  The driver used to
+# name libmingw32.a, libmingwex.a, libmingwthrd.a and libceoldname.a and
+# this script satisfied them with one alias and three empty archives, so
+# a missing library looked like an undefined symbol.  WinCE.cpp now
+# names libakari.a and nothing else of that family, and names no C
+# library until one exists.
 #
 # Known driver gap (2026-09-10 toolchain): -mconsole links
 # /entry:mainCRTStartup (the desktop spelling); the CE-documented main()
@@ -72,8 +71,6 @@
 #     akari_crt0.o akari_dllcrt.o libakari.a   (real names)
 #     libcoredll{,4,6}.a       doc-derived COREDLL import libraries
 #     lib<dll>.a               doc-derived import libraries (108 def files)
-#     libmingw32.a             = libakari.a
-#     libmingwex.a libceoldname.a libmingwthrd.a   placeholders
 #     libpthread.a libgmon.a gcrt3.o libposix.a   gated extras
 #
 # Stage 3 (compiler-rt builtins + libunwind/libc++abi/libc++) is driven by
@@ -138,8 +135,11 @@ if [ -z "$PREFIX" ]; then
 fi
 SYSROOT="$(cd "$(dirname "$PREFIX")" 2>/dev/null && pwd)/$(basename "$PREFIX")"
 
-WINCECRT_SRC="$REPO_ROOT/wince-crt"
 WINCEAPI_SRC="$REPO_ROOT/wince-api"
+# The CRT is in-tree in the SDK since cellvm-sdk M115, which merged
+# kagurasumusun/wince-crt.  That repository still exists but is no
+# longer what this build consumes.
+WINCECRT_SRC="$WINCEAPI_SRC/crt"
 PTHREAD_SRC="$REPO_ROOT/pthread-win32"
 
 for d in "$WINCECRT_SRC" "$WINCEAPI_SRC"; do
@@ -200,7 +200,7 @@ cp -r "$WINCECRT_SRC/." "$CRT_BUILD/"
 )
 CRT_B="$CRT_BUILD/build"
 for f in "$CRT_B/akari_crt0.o" "$CRT_B/akari_dllcrt.o" "$CRT_B/libakari.a"; do
-  [ -s "$f" ] || { echo "$PROGRAM: wince-crt did not produce $f" >&2; exit 1; }
+  [ -s "$f" ] || { echo "$PROGRAM: the CRT did not produce $f" >&2; exit 1; }
 done
 # Real names + the driver-compat names, one archive content each.
 install -m 644 "$CRT_B/akari_crt0.o" "$SYSROOT/lib/akari_crt0.o"
@@ -208,7 +208,6 @@ install -m 644 "$CRT_B/akari_crt0.o" "$SYSROOT/lib/crt3.o"
 install -m 644 "$CRT_B/akari_dllcrt.o" "$SYSROOT/lib/akari_dllcrt.o"
 install -m 644 "$CRT_B/akari_dllcrt.o" "$SYSROOT/lib/dllcrt3.o"
 install -m 644 "$CRT_B/libakari.a" "$SYSROOT/lib/libakari.a"
-install -m 644 "$CRT_B/libakari.a" "$SYSROOT/lib/libmingw32.a"
 mkdir -p "$SYSROOT/include/akari"
 install -m 644 "$WINCECRT_SRC/include/akari/compiler.h" "$SYSROOT/include/akari/"
 install -m 644 "$WINCECRT_SRC/include/akari/crt.h" "$SYSROOT/include/akari/"
@@ -243,30 +242,6 @@ done
 cp -r "$WINCEAPI_SRC/include/." "$SYSROOT/include/"
 echo "   import libraries: $n_libs  (+coredll version-spelling copies)"
 
-# --- driver-compat placeholder archives --------------------------------------
-echo "== [3/5] driver-compat placeholders (content pending the Stage 3 C library, llvm-libc)"
-"$LLVM_AR" rcs "$SYSROOT/lib/libmingwex.a"
-"$LLVM_RANLIB" "$SYSROOT/lib/libmingwex.a"
-"$LLVM_AR" rcs "$SYSROOT/lib/libceoldname.a"
-"$LLVM_RANLIB" "$SYSROOT/lib/libceoldname.a"
-"$LLVM_AR" rcs "$SYSROOT/lib/libmingwthrd.a"
-"$LLVM_RANLIB" "$SYSROOT/lib/libmingwthrd.a"
-cat > "$SYSROOT/lib/PLACEHOLDERS.md" <<'EOF'
-# Placeholder archives
-
-`libmingwex.a`, `libceoldname.a` and `libmingwthrd.a` are EMPTY.  The
-WinCE clang driver's default link line names them unconditionally (they
-were the CeGCC-lineage C-library supplement / old-name-redirect / thread
--glue layers of the retired mingwrt stack).  Their real content arrives
-with the Stage 3 C library -- llvm-libc built from the llvm-project
-submodule by build-wince-runtimes.sh (wince-crt stays the startup layer
-only; see its include/akari/crt.h scope note).
-
-Until that layer lands, a program that references their symbols fails
-at link time with a clear `undefined symbol` error (e.g. `strlen`,
-`_stricmp`) rather than a missing-file error.  A Win32-API-only program
-links and runs.
-EOF
 
 # --- gated extras (need the C library layer) ---------------------------------
 # The C library is Stage 3's job (llvm-libc), installed into the sysroot
