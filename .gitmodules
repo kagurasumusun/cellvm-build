@@ -1,20 +1,20 @@
 [submodule "llvm-project"]
-	path = llvm-project
-	url = https://github.com/kagurasumusun/llvm-project.git
-	branch = LLVM-WinCE
+  path = llvm-project
+  url = https://github.com/kagurasumusun/llvm-project.git
+  branch = LLVM-WinCE
 [submodule "cellvm-sdk"]
-	path = cellvm-sdk
-	url = https://github.com/kagurasumusun/cellvm-sdk.git
-	branch = main
+  path = cellvm-sdk
+  url = https://github.com/kagurasumusun/cellvm-sdk.git
+  branch = main
 [submodule "wince-crt"]
-	path = wince-crt
-	url = https://github.com/kagurasumusun/wince-crt.git
-	branch = main
+  path = wince-crt
+  url = https://github.com/kagurasumusun/wince-crt.git
+  branch = main
 [submodule "pthread-win32"]
-	path = pthread-win32
-	url = https://github.com/kagurasumusun/pthread-win32.git
-	branch = master
+  path = pthread-win32
+  url = https://github.com/kagurasumusun/pthread-win32.git
+  branch = master
 [submodule "wince-docs-corpus"]
-	path = wince-docs-corpus
-	url = https://github.com/kagurasumusun/wince-docs-corpus/tree/main
-	branch = main
+  path = wince-docs-corpus
+  url = https://github.com/kagurasumusun/wince-docs-corpus.git
+  branch = main
