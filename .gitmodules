@@ -16,5 +16,5 @@
 	branch = master
 [submodule "wince-docs-corpus"]
 	path = wince-docs-corpus
-	url = https://github.com/kagurasumusun/wince-docs-corpus.git
+	url = https://github.com/kagurasumusun/wince-docs-corpus/tree/main
 	branch = main
