@@ -2,9 +2,9 @@
   path = llvm-project
   url = https://github.com/kagurasumusun/llvm-project.git
   branch = LLVM-WinCE
-[submodule "akari-sdk"]
-  path = akari-sdk
-  url = https://github.com/kagurasumusun/akari-sdk.git
+[submodule "akari-dev"]
+  path = akari-dev
+  url = https://github.com/kagurasumusun/akari-dev.git
   branch = main
 [submodule "wince-crt"]
   path = wince-crt
