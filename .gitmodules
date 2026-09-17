@@ -14,3 +14,7 @@
 	path = pthread-win32
 	url = https://github.com/kagurasumusun/pthread-win32.git
 	branch = master
+[submodule "wince-docs-corpus"]
+	path = wince-docs-corpus
+	url = https://github.com/kagurasumusun/wince-docs-corpus.git
+	branch = main
